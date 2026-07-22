@@ -67,7 +67,7 @@ class App {
         this.initASR();
         this.renderAll();
         this.updateToggles();
-        
+
         const proxyInput = document.getElementById('proxyUrlInput');
         if (proxyInput && this.settings.proxyUrl) proxyInput.value = this.settings.proxyUrl;
 
@@ -89,7 +89,7 @@ class App {
     bindEvents() {
         const sendBtn = document.getElementById('sendBtn');
         sendBtn.addEventListener('click', () => this.handleSendClick());
-        
+
         const input = document.getElementById('userInput');
         input.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
@@ -184,7 +184,7 @@ class App {
         const lastState = this.history.pop();
         this.cards = lastState.cards;
         if (!this.theme.locked) this.theme = lastState.theme;
-        
+
         this.saveState();
         this.renderAll();
         this.applyTheme();
@@ -221,7 +221,7 @@ class App {
                 this.settings = data.settings || this.settings;
                 this.sessionId = data.sessionId || this.sessionId;
                 this.userId = data.userId || this.userId;
-                
+
                 this.renderAll();
                 this.applyTheme();
                 this.applyView();
@@ -276,7 +276,7 @@ class App {
         if (!card) return;
         if (q !== null) card.q = q;
         if (r !== null) card.r = r;
-        
+
         const el = document.querySelector(`.flip-card[data-id="${id}"]`);
         if (el) {
             if (q !== null) el.querySelector('.card-face:first-child .content').innerHTML = this.md(q);
@@ -292,7 +292,7 @@ class App {
         const grid = document.getElementById('grid');
         const empty = document.getElementById('emptyState');
         grid.innerHTML = '';
-        
+
         if (this.cards.length === 0) {
             grid.appendChild(empty);
             empty.style.display = 'flex';
@@ -427,7 +427,7 @@ class App {
 
     async sendRequest(prompt, contextCardId = null) {
         this.streamingId = contextCardId ? contextCardId : this.addCard(prompt, '...', {});
-        
+
         const cardEl = document.querySelector(`.flip-card[data-id="${this.streamingId}"]`);
         if(cardEl && !contextCardId) setTimeout(() => cardEl.classList.add('flipped'), 100);
 
@@ -476,7 +476,7 @@ class App {
                 const { done, value } = await reader.read();
                 if (done) break;
                 buffer += this.decoder.decode(value, { stream: true });
-                
+
                 const lines = buffer.split('\n\n');
                 buffer = lines.pop() || '';
                 for (const line of lines) {
@@ -525,7 +525,7 @@ class App {
     updateStreamingContent(text, replace = false) {
         if (!this.streamingId) return;
         const visible = text.replace(/![^!]+!/g, '');
-        
+
         const el = document.querySelector(`.flip-card[data-id="${this.streamingId}"] .response-content`);
         if (el) {
             if (replace) {
@@ -555,7 +555,7 @@ class App {
 
         const { cleanText, styles, themeUpdate, actions } = this.parseCommands(fullText);
         const card = this.cards.find(c => c.id === id);
-        
+
         if (card) {
             // Specific Logic for "New Request" or "New Response" extraction from cleanText
             // If the AI followed instructions, it might have output text like "New Request: ... \n New Response: ..."
@@ -563,11 +563,11 @@ class App {
             // We will rely on the fact that if the prompt asked to edit the request, the AI should ideally return the structure.
             // However, to be safe, we update the Card properties directly if we detect specific patterns in cleanText.
             // But since the AI is smart, we usually just update the Card content based on what came back.
-            
+
             // Check if cleanText contains "New Request:" or "New Response:"
             let newQ = null;
             let newR = null;
-            
+
             const reqMatch = cleanText.match(/New Request:\s*(.+)/i);
             const respMatch = cleanText.match(/New Response:\s*(.+)/i);
 
@@ -585,7 +585,7 @@ class App {
                 // Let's keep the old response if only Request changed.
                 if (!newR) newR = card.r; 
             }
-            
+
             if (newR) {
                 card.r = newR;
             }
@@ -611,7 +611,7 @@ class App {
 
         const finalDisplayText = card ? card.r : cleanText; 
         const cleanHtml = this.md(finalDisplayText);
-        
+
         const el = document.querySelector(`.flip-card[data-id="${id}"] .response-content`);
         if (el) el.innerHTML = cleanHtml;
 
@@ -696,10 +696,10 @@ class App {
             if (styles.fontStyle) f.style.fontStyle = styles.fontStyle;
             if (styles.padding) f.style.padding = styles.padding;
         });
-        
+
         if (styles.borderColor) el.style.borderColor = styles.borderColor;
         if (styles.borderRadius) el.style.borderRadius = styles.borderRadius;
-        
+
         if (styles.customCSS) {
             const id = `style-${el.dataset.id}`;
             let styleTag = document.getElementById(id);
@@ -715,10 +715,10 @@ class App {
     openCardMenu(id, e) {
         if (e && e.preventDefault) e.preventDefault();
         if (e && e.stopPropagation) e.stopPropagation();
-        
+
         this.contextMenuTargetId = id;
         const menu = document.getElementById('cardMenu');
-        
+
         let x, y;
         if (e && e.clientX) {
             x = e.clientX;
@@ -789,7 +789,7 @@ class App {
                 break;
             case 'style':
                 this.stylingId = id;
-                
+
 
                 this.loadStyleValues(card.styles || {});
                 this.openModal('styleModal');
@@ -853,7 +853,7 @@ class App {
 
     saveStyles() {
         if (!this.stylingId) return;
-        
+
         if (this.theme.locked) {
             this.showToast("Global Theme Locked - Cannot change card styles");
             this.closeModal('styleModal');
@@ -861,7 +861,7 @@ class App {
         }
 
         const isLocked = document.getElementById('styleLocked').checked;
-        
+
         const styles = {
             locked: isLocked,
             color: document.getElementById('styleColor').value,
@@ -887,14 +887,14 @@ class App {
         if (card) {
             card.styles = { ...(card.styles || {}), ...styles };
             this.saveState();
-            
+
             const el = document.querySelector(`.flip-card[data-id="${this.stylingId}"]`);
             if (el) {
                 this.applyCardStyleToEl(el, styles);
                 if(isLocked) el.classList.add('locked');
                 else el.classList.remove('locked');
             }
-            
+
             this.pushHistory("Style Change");
             this.closeModal('styleModal');
         }
@@ -941,7 +941,7 @@ class App {
         const instructions = document.getElementById('promptArea').value.trim();
         const { action, id } = this.promptContext;
         const card = this.cards.find(c => c.id === id);
-        
+
         this.closeModal('promptModal');
         document.getElementById('promptArea').value = '';
 
@@ -1012,7 +1012,7 @@ class App {
                 signal
             });
             if (!res.ok) throw new Error("Proxy Error");
-            
+
             const reader = res.body.getReader();
             let buffer = '';
             let accumulated = '';
@@ -1058,7 +1058,7 @@ class App {
     applyAITheme() {
         const desc = document.getElementById('aiThemePrompt').value.trim();
         if (!desc) return;
-        
+
         if (this.theme.locked) {
             this.showToast("Global Theme Locked");
             this.closeModal('aiThemeModal');
@@ -1072,7 +1072,7 @@ Do not output any other text.`;
 
         this.closeModal('aiThemeModal');
         this.showToast("Generating Theme...");
-        
+
         const url = this.getProxyUrl();
         fetch(`${url}/chat`, {
             method: 'POST',
@@ -1170,10 +1170,10 @@ Do not output any other text.`;
 
         document.getElementById('fsRequest').innerHTML = this.md(card.q);
         document.getElementById('fsResponse').innerHTML = this.md(card.r);
-        
+
         document.getElementById('fsRequestPane').style.display = 'none';
         document.getElementById('fsResponsePane').style.display = 'block';
-        
+
         document.getElementById('fullscreenOverlay').classList.add('active');
     }
 
@@ -1186,6 +1186,7 @@ Do not output any other text.`;
     toggleFullscreenFlip() {
         this.fsFlipped = !this.fsFlipped;
         const reqPane = document.getElementById('fsRequestPane');
+        const resPane = document.getElementById('fsResponsePane');
         if (this.fsFlipped) {
             reqPane.style.display = 'block';
             resPane.style.display = 'none';
@@ -1207,7 +1208,12 @@ Do not output any other text.`;
         if (!this.fullscreenId) return;
         const card = this.cards.find(c => c.id === this.fullscreenId);
         if (!card) return;
-        
+
+        if (typeof responsiveVoice === 'undefined' || !responsiveVoice) {
+            this.showToast('TTS not available');
+            return;
+        }
+
         const text = this.fsFlipped ? card.q : card.r;
         if (text) {
             if (responsiveVoice.isPlaying()) {
@@ -1250,9 +1256,9 @@ Do not output any other text.`;
         root.style.setProperty('--card-bg', this.theme.cardBg);
         root.style.setProperty('--text', this.theme.text);
         root.style.setProperty('--border', this.theme.border);
-        
+
         document.getElementById('brandPlaceholder').textContent = this.theme.name;
-        
+
         const lockBtn = document.getElementById('lockLabel');
         if (lockBtn) lockBtn.textContent = this.theme.locked ? 'Unlock Theme' : 'Lock Theme';
     }
@@ -1345,7 +1351,12 @@ Do not output any other text.`;
         if (e && e.stopPropagation) e.stopPropagation();
         const card = this.cards.find(c => c.id === id);
         if (!card || !card.r) return;
-        
+
+        if (typeof responsiveVoice === 'undefined' || !responsiveVoice) {
+            this.showToast('TTS not available');
+            return;
+        }
+
         if (responsiveVoice.isPlaying()) {
             responsiveVoice.cancel();
         } else {
