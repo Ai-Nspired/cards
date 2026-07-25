@@ -1,4 +1,4 @@
-              const DEFAULT_PROXY_URL = "https://orproxy.ai-n.workers.dev";
+              const DEFAULT_PROXY_URL = "https://ai-proxy.ai-n.workers.dev";
 const STORAGE_KEY = "ai_ndraft_data_v2";
 
 // UPDATED PROMPT: "Document Drafter" persona
