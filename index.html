@@ -2,416 +2,721 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Curl Test Suite - Interactive Frontend</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>AI Cards - Fixed Fullscreen Controls</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+
     <style>
+        /* ===== CSS Variables & Reset ===== */
+        :root {
+            --card-min-height: 220px;
+            --transition-speed: 0.3s;
+            --primary-color: #0066ff;
+            --error-color: #d00;
+            --success-color: #28a745;
+            --border-radius: 16px;
+            --shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            --shadow-large: 0 20px 60px rgba(0, 0, 0, 0.3);
+            --text-primary: #333;
+            --text-secondary: #666;
+            --bg-primary: #fff;
+            --bg-secondary: #f5f5f5;
+            --bg-tertiary: #f8f9fa;
+        }
+
         * {
-            margin: 0;
-            padding: 0;
             box-sizing: border-box;
         }
 
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            padding: 20px;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: var(--bg-secondary);
+            overflow-x: hidden;
+            line-height: 1.6;
+            color: var(--text-primary);
         }
 
-        .container {
+        /* ===== Selection Bar ===== */
+        #selectionBar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            background: var(--bg-primary);
+            border-bottom: 1px solid #ddd;
+            padding: 12px 20px;
+            z-index: 1000;
+            display: none;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: var(--shadow);
+        }
+
+        #selectionBar.active { 
+            display: flex; 
+        }
+
+        #mergeSelected {
+            background: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        #mergeSelected:hover {
+            background: #0052cc;
+        }
+
+        #cancelSelect {
+            background: none;
+            border: none;
+            font-size: 20px;
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+        }
+
+        #cancelSelect:hover {
+            background: rgba(0, 0, 0, 0.05);
+        }
+
+        /* ===== FIXED FULLSCREEN OVERLAY ===== */
+        .fullscreen-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.8);
+            display: none;
+            z-index: 10000;
+            backdrop-filter: blur(5px);
+        }
+
+        .fullscreen-overlay.active {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .fullscreen-card {
+            width: 95%;
+            max-width: 1000px;
+            height: 95vh;
+            background: var(--bg-primary);
+            border-radius: 20px;
+            box-shadow: var(--shadow-large);
+            perspective: 2000px;
+        }
+
+        .fullscreen-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            transition: transform var(--transition-speed);
+            transform-style: preserve-3d;
+        }
+
+        /* 🔧 CRITICAL FIX: Proper rotation transform */
+        .fullscreen-overlay.flipped .fullscreen-inner {
+            transform: rotateY(180deg);
+        }
+
+        .fullscreen-face {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            backface-visibility: hidden;
+            border-radius: 20px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .fullscreen-front {
+            background: var(--bg-primary);
+        }
+
+        /* 🔧 CRITICAL FIX: Back face starts rotated */
+        .fullscreen-back {
+            background: var(--bg-primary);
+            transform: rotateY(180deg);
+        }
+
+        .fullscreen-header {
+            padding: 16px 24px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: linear-gradient(to right, var(--bg-tertiary), var(--bg-primary));
+        }
+
+        .fullscreen-title {
+            font-weight: 700;
+            color: var(--text-primary);
+            font-size: 18px;
+        }
+
+        .fullscreen-controls {
+            display: flex;
+            gap: 8px;
+        }
+
+        .fullscreen-btn {
+            background: none;
+            border: none;
+            font-size: 18px;
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 6px;
+            transition: all 0.2s;
+            opacity: 0.7;
+        }
+
+        .fullscreen-btn:hover {
+            opacity: 1;
+            background: rgba(0, 0, 0, 0.05);
+        }
+
+        .fullscreen-content {
+            flex: 1;
+            padding: 24px;
+            overflow-y: auto;
+            font-size: 16px;
+            line-height: 1.7;
+            outline: none;
+        }
+
+        .fullscreen-content[contenteditable="true"] {
+            background: rgba(0, 102, 255, 0.03);
+            border-radius: var(--border-radius);
+        }
+
+        /* ===== Card Grid ===== */
+        #grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 16px;
+            padding: 16px;
+            padding-top: 70px;
+            padding-bottom: 120px;
+            min-height: calc(100vh - 140px);
+        }
+
+        @media (min-width: 600px) {
+            #grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (min-width: 900px) {
+            #grid {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+
+        /* ===== Individual Cards ===== */
+        .flip-card {
+            height: var(--card-min-height);
+            perspective: 1000px;
+            border-radius: var(--border-radius);
+            overflow: hidden;
+            box-shadow: var(--shadow);
+            transition: all 0.3s ease;
+        }
+
+        .flip-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+        }
+
+        .flip-card.new-arrival {
+            opacity: 0;
+            transform: scale(0.95) translateY(20px);
+            animation: cardArrival 0.5s ease forwards;
+        }
+
+        @keyframes cardArrival {
+            to {
+                opacity: 1;
+                transform: scale(1) translateY(0);
+            }
+        }
+
+        .flip-card-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            transition: transform var(--transition-speed);
+            transform-style: preserve-3d;
+        }
+
+        .flipped .flip-card-inner {
+            transform: rotateY(180deg);
+        }
+
+        .card-face {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            backface-visibility: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .card-front {
+            background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-tertiary) 100%);
+        }
+
+        .card-back {
+            transform: rotateY(180deg);
+            background: linear-gradient(135deg, #ffffff 0%, #fafbff 100%);
+        }
+
+        .question-div,
+        .response-content {
+            padding: 16px;
+            flex: 1;
+            overflow-y: auto;
+            font-size: 15px;
+            line-height: 1.6;
+        }
+
+        .question-div {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .flip-card.selected {
+            outline: 4px solid var(--primary-color);
+            outline-offset: -4px;
+            transform: scale(1.02);
+            z-index: 20;
+        }
+
+        /* ===== Loading & Status ===== */
+        #loading {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px 30px;
+            border-radius: var(--border-radius);
+            display: none;
+            z-index: 2000;
+            backdrop-filter: blur(10px);
+        }
+
+        #loading.show {
+            display: block;
+        }
+
+        #savedNotice {
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--text-primary);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 25px;
+            opacity: 0;
+            transition: opacity var(--transition-speed);
+            box-shadow: var(--shadow);
+        }
+
+        #savedNotice.show {
+            opacity: 1;
+        }
+
+        /* ===== Input Panel ===== */
+        #inputPanel {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(255, 255, 255, 0.95);
+            border-top: 1px solid #ddd;
+            padding: 16px;
+            backdrop-filter: blur(20px);
+            box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .input-container {
+            display: flex;
+            gap: 10px;
+            align-items: center;
             max-width: 1200px;
             margin: 0 auto;
         }
 
-        .header {
-            text-align: center;
-            color: white;
-            margin-bottom: 40px;
+        #modeSelect {
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background: var(--bg-primary);
+            font-size: 14px;
+            min-width: 100px;
         }
 
-        .header h1 {
-            font-size: 2.5em;
-            margin-bottom: 10px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-        }
-
-        .header p {
-            font-size: 1.1em;
-            opacity: 0.9;
-        }
-
-        .test-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-            gap: 20px;
-            margin-bottom: 40px;
-        }
-
-        .card {
-            background: white;
+        #userInput {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e1e1e1;
             border-radius: 12px;
-            padding: 20px;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-            transition: transform 0.2s, box-shadow 0.2s;
-            cursor: pointer;
-            position: relative;
-            overflow: hidden;
+            font-size: 16px;
+            outline: none;
+            transition: border-color var(--transition-speed);
         }
 
-        .card:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 15px 50px rgba(0,0,0,0.3);
+        #userInput:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.1);
         }
 
-        .card-header {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            margin-bottom: 15px;
-        }
-
-        .card-title {
-            font-size: 1.2em;
-            font-weight: 600;
-            color: #333;
-        }
-
-        .status-badge {
-            padding: 5px 12px;
-            border-radius: 20px;
-            font-size: 0.85em;
-            font-weight: 600;
+        #sendBtn {
+            background: var(--primary-color);
             color: white;
-        }
-
-        .status-badge.pending { background: #f59e0b; }
-        .status-badge.success { background: #10b981; }
-        .status-badge.error { background: #ef4444; }
-
-        .card-body {
-            color: #666;
-            font-size: 0.9em;
-            line-height: 1.6;
-        }
-
-        .card-footer {
-            margin-top: 15px;
-            padding-top: 15px;
-            border-top: 1px solid #eee;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .btn {
-            padding: 8px 16px;
             border: none;
-            border-radius: 6px;
+            padding: 12px 20px;
+            border-radius: 10px;
             cursor: pointer;
-            font-size: 0.9em;
-            font-weight: 500;
+            font-weight: 600;
+            font-size: 14px;
             transition: all 0.2s;
         }
 
-        .btn-primary {
-            background: #6366f1;
-            color: white;
+        #sendBtn:hover {
+            background: #0052cc;
+            transform: translateY(-1px);
         }
 
-        .btn-primary:hover { background: #5856eb; }
-
-        .btn-success {
-            background: #10b981;
-            color: white;
-        }
-
-        .btn-error {
-            background: #ef4444;
-            color: white;
-        }
-
-        .modal {
-            display: none;
+        /* ===== More Menu ===== */
+        #moreMenuBtn {
             position: fixed;
-            z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 0%;
-            height: 0%;
-            opacity: 0;
-            transition: all 0.3s ease;
-            background-color: rgba(0,0,0,0.8);
+            bottom: 120px;
+            right: 20px;
+            background: var(--bg-primary);
+            border: 1px solid #ddd;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            font-size: 24px;
+            cursor: pointer;
+            box-shadow: var(--shadow);
+            z-index: 900;
+            transition: all 0.3s;
         }
 
-        .modal.show {
-            display: block;
-            opacity: 1;
+        #moreMenuBtn:hover {
+            transform: scale(1.05);
+        }
+
+        #moreModal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+        }
+
+        #moreModal.active {
+            display: flex;
         }
 
         .modal-content {
-            position: absolute;
+            background: var(--bg-primary);
+            border-radius: var(--border-radius);
+            padding: 24px;
+            width: 90%;
+            max-width: 400px;
+            margin: 20px;
+        }
+
+        .modal-title {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 20px;
+            color: var(--text-primary);
+        }
+
+        .modal-input {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+            margin-bottom: 12px;
+        }
+
+        .modal-btn {
+            width: 100%;
+            padding: 12px;
+            margin: 6px 0;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            background: var(--bg-primary);
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .modal-btn:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .modal-btn.primary {
+            background: var(--primary-color);
+            color: white;
+            border-color: var(--primary-color);
+        }
+
+        .modal-btn.primary:hover {
+            background: #0052cc;
+        }
+
+        /* ===== Card Menu ===== */
+        #cardMenu {
+            position: fixed;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            background: white;
-            padding: 30px;
-            border-radius: 12px;
-            width: 80%;
-            max-width: 800px;
-            max-height: 80vh;
-            overflow-y: auto;
-        }
-
-        .modal-close {
-            position: absolute;
-            top: 10px;
-            right: 15px;
-            font-size: 2em;
-            cursor: pointer;
-            color: #999;
-        }
-
-        .modal-close:hover { color: #333; }
-
-        .result-section {
-            margin-top: 15px;
-            padding: 15px;
-            background: #f8f9fa;
-            border-radius: 8px;
+            background: var(--bg-primary);
+            border-radius: var(--border-radius);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+            padding: 16px;
             display: none;
+            flex-direction: column;
+            gap: 8px;
+            z-index: 100;
+            min-width: 200px;
         }
 
-        .result-section.active { display: block; }
-
-        .result-section h4 {
-            margin-bottom: 10px;
-            color: #333;
+        #cardMenu.active {
+            display: flex;
         }
 
-        .result-body {
-            background: white;
-            padding: 10px;
-            border-radius: 6px;
-            font-family: 'Monaco', 'Consolas', monospace;
-            font-size: 0.85em;
-            max-height: 300px;
-            overflow-y: auto;
-            white-space: pre-wrap;
-            word-break: break-all;
+        .menu-btn {
+            background: none;
+            border: none;
+            font-size: 16px;
+            cursor: pointer;
+            padding: 12px;
+            text-align: left;
+            border-radius: 8px;
+            transition: background 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 12px;
         }
 
-        .badge {
+        .menu-btn:hover {
+            background: rgba(0, 102, 255, 0.1);
+        }
+
+        .menu-btn.delete {
+            color: var(--error-color);
+        }
+
+        /* ===== Modals ===== */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            backdrop-filter: blur(5px);
+        }
+
+        .modal-overlay.active {
+            display: flex;
+        }
+
+        .modal-panel {
+            background: var(--bg-primary);
+            border-radius: var(--border-radius);
+            padding: 24px;
+            width: 90%;
+            max-width: 500px;
+            margin: 20px;
+        }
+
+        .modal-panel h3 {
+            margin: 0 0 12px 0;
+            font-size: 18px;
+            color: var(--text-primary);
+        }
+
+        .modal-panel p {
+            margin: 0 0 16px 0;
+            color: var(--text-secondary);
+            font-size: 14px;
+        }
+
+        .modal-textarea {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-family: inherit;
+            font-size: 14px;
+            min-height: 120px;
+            resize: vertical;
+            outline: none;
+        }
+
+        .modal-textarea:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(0, 102, 255, 0.1);
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 12px;
+            justify-content: flex-end;
+            margin-top: 16px;
+        }
+
+        .modal-actions button {
+            padding: 8px 16px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+
+        .modal-actions button.primary {
+            background: var(--primary-color);
+            color: white;
+            border-color: var(--primary-color);
+        }
+
+        .modal-actions button.primary:hover {
+            background: #0052cc;
+        }
+
+        .modal-actions button:hover {
+            background: var(--bg-tertiary);
+        }
+
+        /* ===== Hidden & Utility ===== */
+        .hidden {
+            display: none !important;
+        }
+
+        /* Streaming animation */
+        .streaming-indicator {
+            text-align: center;
+            color: var(--text-secondary);
+            padding: 20px;
+        }
+
+        .streaming-cursor {
             display: inline-block;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 0.75em;
-            font-weight: 600;
+            width: 3px;
+            height: 1em;
+            background: currentColor;
+            animation: blink 1s infinite;
+            margin-left: 2px;
         }
 
-        .badge-info { background: #dbeafe; color: #1e40af; }
-        .badge-success { background: #d1fae5; color: #065f46; }
-        .badge-error { background: #fee2e2; color: #991b1b; }
+        @keyframes blink {
+            50% { opacity: 0; }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .fullscreen-card {
+                width: 98%;
+                height: 98vh;
+            }
+
+            .fullscreen-content {
+                padding: 16px;
+            }
+
+            .input-container {
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            #moreModal {
+                padding: 10px;
+            }
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>🧪 Curl Test Suite</h1>
-            <p>Interactive frontend for testing curl commands</p>
-        </div>
+    <!-- Selection Bar -->
+    <div id="selectionBar">
+        <button id="cancelSelect">✕</button>
+        <span id="selectCount">0 selected</span>
+        <button id="mergeSelected">Merge Selected</button>
+    </div>
 
-        <div class="test-grid" id="testGrid">
-            <!-- Cards will be populated by JavaScript -->
+    <!-- FIXED: Fullscreen Overlay with proper panels -->
+    <div class="fullscreen-overlay" id="fullscreenOverlay">
+        <div class="fullscreen-card">
+            <div class="fullscreen-inner">
+                <!-- Front: Question -->
+                <div class="fullscreen-face fullscreen-front">
+                    <div class="fullscreen-header">
+                        <span class="fullscreen-title">Question</span>
+                        <div class="fullscreen-controls">
+                            <button class="fullscreen-btn fullscreen-flip" title="Flip to Response">↕️</button>
+                            <button class="fullscreen-btn fullscreen-split hidden" title="Split">⬇</button>
+                            <button class="fullscreen-btn fullscreen-close" title="Close">❌</button>
+                        </div>
+                    </div>
+                    <div class="fullscreen-content" id="fsQuestion" contenteditable="false"></div>
+                </div>
+
+                <!-- Back: Response -->
+                <div class="fullscreen-face fullscreen-back">
+                    <div class="fullscreen-header">
+                        <span class="fullscreen-title">Response</span>
+                        <div class="fullscreen-controls">
+                            <button class="fullscreen-btn fullscreen-flip" title="Flip to Question">↕️</button>
+                            <button class="fullscreen-btn fullscreen-split hidden" title="Split">⬇</button>
+                            <button class="fullscreen-btn fullscreen-close" title="Close">❌</button>
+                        </div>
+                    </div>
+                    <div class="fullscreen-content" id="fsResponse" contenteditable="false"></div>
+                </div>
+            </div>
         </div>
     </div>
 
-    <!-- Modal for detailed results -->
-    <div class="modal" id="resultModal">
+    <!-- Main Grid -->
+    <div id="grid"></div>
+
+    <!-- Loading Indicator -->
+    <div id="loading">💭 Thinking...</div>
+
+    <!-- Status Notice -->
+    <div id="savedNotice">💾 Saved!</div>
+
+    <!-- More Menu Button -->
+    <button id="moreMenuBtn" title="Menu">⚙️</button>
+
+    <!-- More Modal -->
+    <div id="moreModal" class="modal-overlay">
         <div class="modal-content">
-            <span class="modal-close" onclick="closeModal()">×</span>
-            <h3 id="modalTitle"></h3>
-            <div id="modalContent"></div>
-        </div>
-    </div>
+            <h3 class="modal-title">Settings & Actions</h3>
+            <input type="url" id="modalBaseUrl" class="modal-input" placeholder="https://api.example.com">
+            <button class="modal-btn primary" id="saveApiBtn">💾 Save API URL</button>
 
-    <script>
-        const tests = [
-            {
-                title: "GET Request",
-                description: "Basic GET request to httpbin.org",
-                method: "GET",
-                url: "http://httpbin.org/get",
-                expected: 200
-            },
-            {
-                title: "POST JSON",
-                description: "POST request with JSON data",
-                method: "POST",
-                url: "http://httpbin.org/post",
-                extra: ["-H", "Content-Type: application/json", "-d", '{"test": "data"}'],
-                expected: 200
-            },
-            {
-                title: "POST Form",
-                description: "POST request with form data",
-                method: "POST",
-                url: "http://httpbin.org/post",
-                extra: ["-d", "key=value"],
-                expected: 200
-            },
-            {
-                title: "Headers",
-                description: "GET request with custom headers",
-                method: "GET",
-                url: "http://httpbin.org/headers",
-                extra: ["-H", "X-Custom: test", "-H", "User-Agent: Test/1.0"],
-                expected: 200
-            },
-            {
-                title: "Authentication",
-                description: "Basic authentication test",
-                method: "GET",
-                url: "http://httpbin.org/basic-auth/user/pass",
-                extra: ["-u", "user:pass"],
-                expected: 200
-            },
-            {
-                title: "Query Params",
-                description: "GET request with query parameters",
-                method: "GET",
-                url: "http://httpbin.org/get?key1=value1&key2=value2",
-                expected: 200
-            },
-            {
-                title: "404 Error",
-                description: "Error handling for 404 status",
-                method: "GET",
-                url: "http://httpbin.org/status/404",
-                expected: 404
-            },
-            {
-                title: "HTTPS",
-                description: "HTTPS request to httpbin.org",
-                method: "GET",
-                url: "https://httpbin.org/get",
-                expected: 200
-            },
-            {
-                title: "Redirect",
-                description: "Redirect handling with -L flag",
-                method: "GET",
-                url: "http://httpbin.org/redirect/1",
-                extra: ["-L"],
-                expected: 200
-            },
-            {
-                title: "PUT Request",
-                description: "PUT request to httpbin.org",
-                method: "PUT",
-                url: "http://httpbin.org/put",
-                extra: ["-d", "test data"],
-                expected: 200
-            },
-            {
-                title: "DELETE Request",
-                description: "DELETE request to httpbin.org",
-                method: "DELETE",
-                url: "http://httpbin.org/delete",
-                expected: 200
-            },
-            {
-                title: "Cookies",
-                description: "Send cookies with request",
-                method: "GET",
-                url: "http://httpbin.org/cookies",
-                extra: ["-b", "test=value"],
-                expected: 200
-            },
-            {
-                title: "Timeout",
-                description: "5s timeout on slow endpoint",
-                method: "GET",
-                url: "http://httpbin.org/delay/5",
-                extra: ["--max-time", "1"],
-                expected: "timeout"
-            }
-        ];
-
-        function runTest(test, cardElement) {
-            const btn = cardElement.querySelector('.btn-run');
-            const badge = cardElement.querySelector('.status-badge');
-            const resultDiv = cardElement.querySelector('.result-section');
-            const closeBtn = cardElement.querySelector('.modal-close');
-            
-            btn.disabled = true;
-            badge.textContent = "Running...";
-            badge.className = "status-badge pending";
-            
-            const formData = {
-                method: test.method,
-                url: test.url,
-                extra: test.extra || []
-            };
-            
-            fetch('/run_curl_test', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(formData)
-            })
-            .then(res => res.json())
-            .then(data => {
-                badge.textContent = data.success ? "PASSED" : "FAILED";
-                badge.className = "status-badge " + (data.success ? "success" : "error");
-                
-                const resultContent = `
-                    <div class="result-section active">
-                        <h4>Command:</h4>
-                        <div class="result-body">${data.command}</div>
-                        ${data.stdout ? `<h4>Output:</h4><div class="result-body">${data.stdout}</div>` : ''}
-                        ${data.stderr ? `<h4>Errors:</h4><div class="result-body">${data.stderr}</div>` : ''}
-                        <h4>Status: <span class="badge badge-${data.success ? 'success' : 'error'}">${data.success ? 'OK' : 'FAIL'}</span></h4>
-                    `;
-                
-                document.getElementById('modalTitle').textContent = test.title;
-                document.getElementById('modalContent').innerHTML = resultContent;
-                document.getElementById('resultModal').classList.add('show');
-            })
-            .catch(err => {
-                badge.textContent = "ERROR";
-                badge.className = "status-badge error";
-                document.getElementById('modalContent').innerHTML = `<p>Error: ${err}</p>`;
-                document.getElementById('resultModal').classList.add('show');
-            });
-        }
-
-        function closeModal() {
-            document.getElementById('resultModal').classList.remove('show');
-        }
-
-        function init() {
-            const grid = document.getElementById('testGrid');
-            tests.forEach((test, index) => {
-                const card = document.createElement('div');
-                card.className = 'card';
-                card.innerHTML = `
-                    <div class="card-header">
-                        <span class="card-title">${test.title}</span>
-                        <span class="status-badge pending">Pending</span>
-                    </div>
-                    <div class="card-body">
-                        <p>${test.description}</p>
-                        <p><strong>Method:</strong> ${test.method}</p>
-                        <p><strong>URL:</strong> ${test.url}</p>
-                    </div>
-                    <div class="card-footer">
-                        <button class="btn btn-primary btn-run" onclick="runTest(${index}, this)">Run Test</button>
-                    </div>
-                `;
-                grid.appendChild(card);
-            });
-        }
-
-        init();
-    </script>
-</body>
-</html>
+            <div style="margin-top: 24px; border-top: 1px solid #eee; padding-top: 16px;">
+                <button class="modal-btn" id="modalExport">📤 Export 
