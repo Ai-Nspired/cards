@@ -1,257 +1,529 @@
-:root {
-    --primary: #c41e3a;
-    --bg: #121212;
-    --card-bg: #1e1e1e;
-    --text: #f5f5f5;
-    --border: #333;
-    --shadow: 0 4px 16px rgba(196,30,58,0.2);
-    --radius: 16px;
-    --card-min-height: 200px;
-    --view-cols: 1;
-    --safe-area-bottom: env(safe-area-inset-bottom);
-}
+              const DEFAULT_PROXY_URL = "https://ai-proxy.ai-n.workers.dev";
+const STORAGE_KEY = "ai_ndraft_data_v2";
 
-[data-theme="light"] {
-    --bg: #f8f9fa;
-    --card-bg: #ffffff;
-    --text: #222;
-    --border: #ddd;
-    --shadow: 0 4px 16px rgba(196,30,58,0.15);
-}
+// UPDATED PROMPT: "Document Drafter" persona
+const SYSTEM_PROMPT = `You are a helpful AI Document Drafter. You help build documents card by card.
 
-body.view-grid { --view-cols: 2; }
-body.view-full { --view-cols: 1; }
+1. VISUAL STYLING (Start of response):
+   - Page Theme: !theme:Name,BgHex,CardBgHex,TextHex,BorderHex,PrimaryHex!
+   - Card Style: !bg:#hex! !text:#hex! !border:#hex! !pad:px! !radius:px! !bold! !italic!
 
-@media (max-width: 768px) {
-    body.view-grid { --view-cols: 2; }
-    #grid { gap: 10px; padding: 10px; }
-    #inputPanel { padding: 10px; gap: 8px; padding-bottom: calc(10px + var(--safe-area-bottom)); }
-    #userInput { padding: 14px; font-size: 16px; height: 48px; }
-    #sendBtn { padding: 12px 16px; min-width: 50px; height: 48px; font-size: 22px; }
-    #topBar { height: 50px; }
-    .fab { width: 36px; height: 36px; font-size: 12px; }
-    .view-fab-container { bottom: 95px; right: 10px; }
-    .card-face { font-size: 14px; }
-    #cardMenu { min-width: 200px; left: 50% !important; transform: translateX(-50%) !important; top: auto !important; bottom: 80px; }
-}
+2. APP ACTIONS (Hidden commands, put at end):
+   - !action:merge! (Merges current selection)
+   - !action:clear! (Clears the entire board)
+   - !action:view:grid! or !action:view:list! or !action:view:full! (Changes view)
 
-* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-body {
-    font-family: system-ui, -apple-system, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    padding-top: 50px;
-    padding-bottom: 80px;
-    transition: background 0.3s, color 0.3s;
-    overflow-x: hidden;
-}
+3. CARD EDITING:
+   - To EDIT the REQUEST: Say "New Request: [text]".
+   - To EDIT the RESPONSE: Say "New Response: [text]" or simply provide the improved answer.
+   - To STYLE: Use !text:#hex! !bold! etc.
 
-#topBar {
-    position: fixed; top: 0; left: 0; right: 0; height: 50px;
-    padding: 0 10px; display: flex; align-items: center; justify-content: space-between;
-    z-index: 50; background: linear-gradient(to bottom, var(--bg), transparent); pointer-events: none;
-}
-#brandPlaceholder { pointer-events: none; font-weight: 900; color: var(--primary); text-transform: uppercase; letter-spacing: 1px; font-size: 12px; }
-.top-fabs { pointer-events: auto; display: flex; gap: 6px; }
-.fab {
-    width: 36px; height: 36px; border-radius: 50%; background: var(--card-bg);
-    border: 1px solid var(--border); color: var(--text); display: flex; align-items: center; justify-content: center;
-    cursor: pointer; box-shadow: var(--shadow); transition: all 0.2s; font-size: 12px; backdrop-filter: blur(5px);
-}
-.fab:hover { transform: scale(1.1); background: var(--bg); }
-.fab.primary { background: var(--primary); color: white; border: none; }
+User requests are natural language. You are building a document.`;
 
-#selectionBar {
-    position: fixed; top: 0; left: 0; right: 0; background: var(--card-bg); border-bottom: 1px solid var(--border);
-    padding: 10px; z-index: 1000; display: none; align-items: center; justify-content: space-between;
-    box-shadow: var(--shadow); transform: translateY(-100%); transition: transform 0.3s;
-}
-#selectionBar.active { display: flex; transform: translateY(0); }
-#mergeSelected, #deleteSelected, #splitSelected {
-    background: var(--primary); color: white; border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer; font-size: 13px; margin-left: 6px;
-    display: flex; align-items: center; gap: 4px;
-}
-#deleteSelected { background: #d32f2f; }
-#cancelSelect { padding: 6px 10px; }
+class App {
+    constructor() {
+        this.cards = [];
+        this.history = []; 
+        this.sessionId = "sess_" + Date.now();
+        this.userId = "user_" + Math.random().toString(36).substr(2, 9);
+        this.theme = {
+            name: 'ai-Ncards',
+            primary: '#c41e3a',
+            bg: '#121212',
+            cardBg: '#1e1e1e',
+            text: '#f5f5f5',
+            border: '#333',
+            locked: false
+        };
+        this.settings = {
+            view: 'list',
+            autoTTS: false,
+            asrEnabled: false,
+            proxyUrl: ''
+        };
 
-#grid {
-    display: grid; grid-template-columns: repeat(var(--view-cols), 1fr); gap: 16px; padding: 16px;
-    max-width: 1000px; margin: 0 auto; transition: all 0.3s ease; min-height: 50vh; outline: none;
-}
-body.view-full #grid { display: block; padding: 0; gap: 0; }
-body.view-full #grid .flip-card { height: 100vh; border-radius: 0; border: none; min-height: unset; }
-#grid:focus-visible { outline: 2px solid var(--primary); outline-offset: 4px; }
+        this.streamingId = null;
+        this.selectedIds = new Set();
+        this.contextMenuTargetId = null;
+        this.fullscreenId = null;
+        this.fsFlipped = false;
+        this.editingId = null; 
+        this.editingField = null;
+        this.stylingId = null; 
+        this.promptContext = null; 
 
-.flip-card {
-    min-height: var(--card-min-height); perspective: 1000px; border-radius: var(--radius);
-    overflow: hidden; box-shadow: var(--shadow); position: relative;
-    background: var(--card-bg); border: 1px solid var(--border);
-    transition: transform 0.2s, box-shadow 0.2s; touch-action: manipulation;
-}
-.flip-card:hover { transform: translateY(-2px); box-shadow: 0 8px 25px rgba(196,30,58,0.3); }
-.flip-card.selected { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary); }
-.flip-card.locked::before { content: '🔒'; position: absolute; top: 8px; right: 8px; z-index: 10; font-size: 12px; }
-.flip-card.new { animation: cardSlideIn 0.4s ease; }
+        this.recognizer = null;
+        this.isListening = false;
 
-@keyframes cardSlideIn {
-    from { opacity: 0; transform: translateY(20px) scale(0.95); }
-    to { opacity: 1; transform: translateY(0) scale(1); }
-}
+        this.decoder = new TextDecoder();
+        this.abortController = null;
+    }
 
-.flip-card-inner {
-    position: relative; width: 100%; height: 100%; transition: transform 0.6s;
-    transform-style: preserve-3d; min-height: inherit;
-}
-.flip-card.flipped .flip-card-inner { transform: rotateY(180deg); }
+    async init() {
+        this.loadState();
+        this.applyTheme();
+        this.applyView();
+        this.bindEvents();
+        this.initASR();
+        this.renderAll();
+        this.updateToggles();
 
-.card-face {
-    position: absolute; width: 100%; height: 100%; backface-visibility: hidden;
-    display: flex; flex-direction: column; padding: 16px; min-height: inherit;
-    background: var(--card-bg); color: var(--text); font-size: 15px; line-height: 1.5;
-}
-.card-face.card-back { transform: rotateY(180deg); }
+        const proxyInput = document.getElementById('proxyUrlInput');
+        if (proxyInput && this.settings.proxyUrl) proxyInput.value = this.settings.proxyUrl;
 
-.card-header {
-    display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;
-    border-bottom: 1px solid var(--border); padding-bottom: 8px; flex-shrink: 0;
-}
+        document.getElementById('stylePadding').addEventListener('input', (e) => document.getElementById('valPad').textContent = e.target.value + 'px');
+        document.getElementById('styleRadius').addEventListener('input', (e) => document.getElementById('valRad').textContent = e.target.value + 'px');
+        document.getElementById('styleWidth').addEventListener('input', (e) => document.getElementById('valWid').textContent = e.target.value + 'px');
+    }
 
-.content, .response-content {
-    flex: 1; overflow-y: auto; word-wrap: break-word; hyphens: auto;
-}
-.content h1, .content h2, .content h3, .response-content h1, .response-content h2, .response-content h3 {
-    color: var(--primary); margin: 0.5em 0;
-}
-.content p, .response-content p { margin-bottom: 0.8em; }
-.content ul, .content ol, .response-content ul, .response-content ol { margin-left: 1.2em; margin-bottom: 0.8em; }
-.content blockquote, .response-content blockquote {
-    border-left: 3px solid var(--primary); padding-left: 12px; margin: 1em 0; opacity: 0.8; font-style: italic;
-}
-.content code, .response-content code {
-    background: rgba(255,255,255,0.1); padding: 2px 4px; border-radius: 3px; font-family: 'Courier New', monospace; font-size: 0.9em;
-}
-.content pre, .response-content pre {
-    background: rgba(255,255,255,0.05); padding: 12px; border-radius: 6px; overflow-x: auto; margin: 1em 0;
-    border: 1px solid var(--border);
-}
-.content pre code, .response-content pre code { background: none; padding: 0; }
+    getProxyUrl() {
+        const inputVal = document.getElementById('proxyUrlInput')?.value.trim();
+        if (inputVal) {
+            this.settings.proxyUrl = inputVal;
+            this.saveState();
+            return inputVal;
+        }
+        return this.settings.proxyUrl || DEFAULT_PROXY_URL;
+    }
 
-.card-actions { display: flex; gap: 4px; }
-.card-actions button { 
-    background: none; border: none; color: var(--text); cursor: pointer; 
-    padding: 4px; opacity: 0.4; border-radius: 4px; transition: all 0.2s; 
-    min-width: 30px; min-height: 30px;
-}
-.card-actions button:hover { opacity: 1; background: rgba(255,255,255,0.1); }
+    bindEvents() {
+        const sendBtn = document.getElementById('sendBtn');
+        sendBtn.addEventListener('click', () => this.handleSendClick());
 
-.fullscreen-overlay {
-    position: fixed; inset: 0; background: var(--bg); z-index: 2000; display: none; flex-direction: column;
-}
-.fullscreen-overlay.active { display: flex; }
-.fs-header { 
-    padding: 12px 16px; background: var(--card-bg); border-bottom: 1px solid var(--border); 
-    display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; 
-}
-.fs-content { 
-    flex: 1; overflow-y: auto; padding: 0; display: flex; flex-direction: column;
-}
-.fs-pane { 
-    background: var(--card-bg); border: none; border-top: 1px solid var(--border); border-radius: 0; 
-    padding: 24px 32px; overflow-y: auto; min-height: 0; width: 100%; 
-    font-size: 1.15rem; line-height: 1.7; margin-bottom: 0; 
-}
-.fs-pane h1, .fs-pane h2, .fs-pane h3 { margin-top: 1.5em; margin-bottom: 0.5em; color: var(--primary); }
-.fs-pane p { margin-bottom: 1em; }
+        const input = document.getElementById('userInput');
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this.handleSendClick();
+            }
+        });
 
-.streaming { text-align: center; color: #888; padding: 20px; display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; }
-.cursor { display: inline-block; width: 3px; height: 1em; background: currentColor; animation: blink 1s infinite; vertical-align: middle; }
-@keyframes blink { 50% { opacity: 0; } }
+        document.getElementById('menuFab').addEventListener('click', () => this.openModal('settingsModal'));
+        document.getElementById('viewFab').addEventListener('click', () => this.cycleView());
+        document.getElementById('undoFabTop').addEventListener('click', () => this.undo());
 
-.thinking-indicator {
-    display: inline-block; color: var(--primary); font-weight: bold; font-size: 12px; 
-    text-transform: uppercase; letter-spacing: 1px; animation: pulse-text 1.5s infinite;
-}
-@keyframes pulse-text { 0% { opacity: 0.3; } 50% { opacity: 1; } 100% { opacity: 0.3; } }
+        document.getElementById('cancelSelect').addEventListener('click', () => this.clearSelection());
+        document.getElementById('mergeSelected').addEventListener('click', () => this.promptAction('merge'));
+        document.getElementById('deleteSelected').addEventListener('click', () => this.bulkDelete());
+        document.getElementById('splitSelected').addEventListener('click', () => this.promptAction('split'));
 
-.stop-stream-btn {
-    background: #d32f2f; color: white; border: none; padding: 4px 8px; border-radius: 4px; cursor: pointer; 
-    font-size: 12px; vertical-align: middle; margin-left: 10px; transition: all 0.2s;
-}
-.stop-stream-btn:hover { background: #b71c1c; transform: scale(1.05); }
+        document.getElementById('cardMenu').addEventListener('click', (e) => {
+            const btn = e.target.closest('.menu-item');
+            if (btn && this.contextMenuTargetId) {
+                const action = btn.dataset.action;
+                if (action === 'undo') {
+                    this.undo();
+                } else {
+                    this.handleCardAction(action, this.contextMenuTargetId);
+                }
+                this.closeCardMenu();
+            }
+        });
 
-#inputPanel {
-    position: fixed; bottom: 0; left: 0; right: 0; background: var(--card-bg); border-top: 1px solid var(--border); 
-    padding: 12px; display: flex; gap: 10px; z-index: 100; box-shadow: 0 -4px 20px rgba(0,0,0,0.2); align-items: center;
-    padding-bottom: calc(12px + var(--safe-area-bottom));
-}
-#userInput {
-    flex: 1; padding: 12px 14px; border-radius: 24px; border: 1px solid var(--border); 
-    background: var(--bg); color: var(--text); font-size: 16px; outline: none; 
-    transition: border 0.2s; resize: none; height: 46px; max-height: 100px; overflow-y: auto;
-}
-#userInput:focus { border-color: var(--primary); }
+        document.querySelectorAll('.modal-overlay').forEach(overlay => {
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) {
+                    const id = overlay.id;
+                    this.closeModal(id);
+                }
+            });
+        });
 
-#sendBtn { 
-    background: var(--primary); color: white; border: none; padding: 0 16px; 
-    border-radius: 24px; cursor: pointer; font-weight: bold; 
-    display: flex; align-items: center; justify-content: center; 
-    min-width: 46px; height: 46px; font-size: 22px; 
-    transition: all 0.2s; flex-shrink: 0;
-}
-#sendBtn:hover { background: #a1172f; transform: translateY(-1px); }
-#sendBtn.listening { background: #d32f2f; animation: pulse-btn 1s infinite; }
-@keyframes pulse-btn { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
+        document.getElementById('promptConfirmBtn').addEventListener('click', () => this.executePromptAction());
 
-.view-fab-container { position: fixed; bottom: 80px; right: 12px; z-index: 90; }
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('#cardMenu') && !e.target.closest('.card-actions') && !e.target.closest('.flip-card')) {
+                this.closeCardMenu();
+            }
+        });
+    }
 
-#cardMenu {
-    position: fixed; background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px;
-    padding: 6px; display: none; flex-direction: column; gap: 2px; z-index: 2000;
-    box-shadow: 0 10px 30px rgba(0,0,0,0.5); min-width: 200px; max-height: 70vh; overflow-y: auto;
-}
-#cardMenu.active { display: flex; }
-.menu-item { 
-    display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 6px; 
-    cursor: pointer; color: var(--text); background: transparent; border: none; width: 100%; 
-    text-align: left; font-size: 14px; transition: background 0.1s;
-}
-.menu-item:active { background: rgba(255,255,255,0.1); }
-.menu-item i { width: 20px; text-align: center; }
-.menu-separator { height: 1px; background: var(--border); margin: 4px 0; }
+    saveState() {
+        const data = {
+            cards: this.cards,
+            theme: this.theme,
+            settings: this.settings,
+            sessionId: this.sessionId,
+            userId: this.userId
+        };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    }
 
-.modal-overlay {
-    position: fixed; inset: 0; background: rgba(0,0,0,0.6); backdrop-filter: blur(4px); z-index: 1500;
-    display: none; align-items: center; justify-content: center; padding: 20px;
-}
-.modal-overlay.active { display: flex; }
-.modal { background: var(--card-bg); border-radius: 16px; width: 100%; max-width: 600px; max-height: 90vh; border: 1px solid var(--border); display: flex; flex-direction: column; box-shadow: 0 20px 50px rgba(0,0,0,0.5); overflow: hidden; }
-.modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
-.modal-body { padding: 20px; overflow-y: auto; }
-.modal-footer { padding: 16px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 12px; }
+    loadState() {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+            try {
+                const data = JSON.parse(raw);
+                this.cards = data.cards || [];
+                this.theme = { ...this.theme, ...data.theme };
+                this.settings = { ...this.settings, ...data.settings };
+                this.sessionId = data.sessionId || this.sessionId;
+                this.userId = data.userId || this.userId;
+            } catch (e) {
+                console.error("Load failed", e);
+            }
+        }
+    }
 
-textarea, input[type="text"], input[type="file"] {
-    width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--text);
-    font-family: inherit; font-size: 15px; resize: vertical; min-height: 120px; margin-bottom: 12px;
-}
+    pushHistory(actionType) {
+        if (this.history.length > 10) this.history.shift();
+        this.history.push({
+            cards: JSON.parse(JSON.stringify(this.cards)),
+            theme: { ...this.theme },
+            timestamp: Date.now(),
+            action: actionType
+        });
+        this.showToast(`Saved: ${actionType}`);
+    }
 
-button.btn { padding: 10px 16px; border-radius: 8px; border: none; cursor: pointer; font-size: 14px; font-weight: 600; transition: all 0.2s; }
-.btn-primary { background: var(--primary); color: white; }
-.btn-danger { background: #d32f2f; color: white; }
-.btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    undo() {
+        if (this.history.length === 0) {
+            this.showToast("Nothing to undo");
+            return;
+        }
+        const lastState = this.history.pop();
+        this.cards = lastState.cards;
+        if (!this.theme.locked) this.theme = lastState.theme;
 
-.style-section { margin-bottom: 16px; }
-.style-section h4 { font-size: 12px; text-transform: uppercase; opacity: 0.7; margin-bottom: 8px; letter-spacing: 0.5px; }
-.color-picker { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.color-picker input { width: 40px; height: 30px; border: none; padding: 0; border-radius: 4px; cursor: pointer; }
-.toggle-group { display: flex; gap: 6px; flex-wrap: wrap; }
-.toggle-btn { padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 12px; cursor: pointer; background: transparent; color: var(--text); }
-.toggle-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
-.slider-group { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.slider-group input { flex: 1; }
-.lock-checkbox { display: flex; align-items: center; gap: 8px; margin-top: 12px; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 6px; }
+        this.saveState();
+        this.renderAll();
+        this.applyTheme();
+        this.showToast("Undid: " + lastState.action);
+    }
 
-#toast { position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%) translateY(100px); background: var(--card-bg); border: 1px solid var(--border); color: var(--text); padding: 10px 16px; border-radius: 20px; font-size: 13px; z-index: 2500; transition: transform 0.3s; opacity: 0; box-shadow: var(--shadow); }
-#toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+    exportData() {
+        const data = {
+            cards: this.cards,
+            theme: this.theme,
+            settings: this.settings,
+            sessionId: this.sessionId,
+            userId: this.userId
+        };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `ai_ncards_export_${Date.now()}.json`;
+        a.click();
+        this.showToast("Export downloaded");
+    }
 
-#emptyState { text-align: center; color: rgba(255,255,255,0.3); margin-top: 50px; font-size: 18px; pointer-events: none; display: flex; flex-direction: column; gap: 10px; align-items: center; }
+    importData(input) {
+        const file = input.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const data = JSON.parse(e.target.result);
+                this.pushHistory("Pre-Import Backup");
+                this.cards = data.cards || [];
+                this.theme = data.theme || this.theme;
+                this.settings = data.settings || this.settings;
+                this.sessionId = data.sessionId || this.sessionId;
+                this.userId = data.userId || this.userId;
+
+                this.renderAll();
+                this.applyTheme();
+                this.applyView();
+                this.saveState();
+                this.showToast("Import Successful");
+                this.closeModal('settingsModal');
+            } catch (err) {
+                alert("Invalid JSON file");
+            }
+        };
+        reader.readAsText(file);
+        input.value = ''; 
+    }
+
+    clearAll() {
+        if (confirm("Are you sure you want to delete ALL cards? This cannot be undone.")) {
+            this.pushHistory("Clear All");
+            this.cards = [];
+            this.saveState();
+            this.renderAll();
+            this.closeModal('settingsModal');
+            this.showToast("Grid Cleared");
+        }
+    }
+
+    resetApp() {
+        if (confirm("WARNING: This will delete ALL data, settings, and history. The app will restart to the welcome screen. Are you sure?")) {
+            localStorage.removeItem(STORAGE_KEY);
+            window.location.reload();
+        }
+    }
+
+    addCard(q, r, styles = {}) {
+        const id = crypto.randomUUID();
+        const card = { id, q, r, styles };
+        this.cards.push(card);
+        this.pushHistory("Add Card");
+        this.renderCard(card, true);
+        return id;
+    }
+
+    deleteCard(id) {
+        this.cards = this.cards.filter(c => c.id !== id);
+        const el = document.querySelector(`.flip-card[data-id="${id}"]`);
+        if (el) el.remove();
+        if (this.fullscreenId === id) this.closeFullscreen();
+        this.saveState();
+    }
+
+    updateCardContent(id, q, r) {
+        const card = this.cards.find(c => c.id === id);
+        if (!card) return;
+        if (q !== null) card.q = q;
+        if (r !== null) card.r = r;
+
+        const el = document.querySelector(`.flip-card[data-id="${id}"]`);
+        if (el) {
+            if (q !== null) el.querySelector('.card-face:first-child .content').innerHTML = this.md(q);
+            if (r !== null) {
+                const rEl = el.querySelector('.response-content');
+                if (rEl) rEl.innerHTML = this.md(r);
+            }
+        }
+        this.saveState();
+    }
+
+    renderAll() {
+        const grid = document.getElementById('grid');
+        const empty = document.getElementById('emptyState');
+        grid.innerHTML = '';
+
+        if (this.cards.length === 0) {
+            grid.appendChild(empty);
+            empty.style.display = 'flex';
+        } else {
+            empty.style.display = 'none';
+            this.cards.forEach(c => this.renderCard(c, false));
+        }
+    }
+
+    renderCard(card, isNew) {
+        const grid = document.getElementById('grid');
+        const empty = document.getElementById('emptyState');
+        if (empty && empty.parentNode) empty.remove();
+
+        const div = document.createElement('div');
+        div.className = `flip-card ${isNew ? 'new' : ''}`;
+        div.dataset.id = card.id;
+        div.tabIndex = 0;
+
+        if (card.styles && card.styles.locked) {
+            div.classList.add('locked');
+        }
+
+        let rHtml;
+        if (card.r === '...') {
+            if (this.streamingId === card.id) {
+                rHtml = '<div class="streaming"><span class="thinking-indicator">Thinking...</span><button class="stop-stream-btn" onclick="app.stopStream()">Stop</button></div>';
+            } else {
+                rHtml = '<div class="streaming"><span class="thinking-indicator">Thinking...</span></div>';
+            }
+        } else {
+            rHtml = this.md(card.r);
+        }
+
+        div.innerHTML = `
+            <div class="flip-card-inner">
+                <div class="card-face">
+                    <div class="card-header">
+                        <span style="font-size:11px; opacity:0.5;">REQ</span>
+                        <div class="card-actions">
+                            <button onclick="app.openCardMenu('${card.id}', event)"><i class="fas fa-ellipsis-v"></i></button>
+                            <button onclick="app.toggleSelect('${card.id}', event)"><i class="fas fa-check-circle"></i></button>
+                        </div>
+                    </div>
+                    <div class="content">${this.md(card.q)}</div>
+                </div>
+                <div class="card-face card-back">
+                    <div class="card-header">
+                        <span style="font-size:11px; opacity:0.5;">RESPONSE</span>
+                        <div class="card-actions">
+                            <button onclick="app.readCard('${card.id}', event)"><i class="fas fa-volume-up"></i></button>
+                            <button onclick="app.openCardMenu('${card.id}', event)"><i class="fas fa-ellipsis-v"></i></button>
+                        </div>
+                    </div>
+                    <div class="response-content">${rHtml}</div>
+                </div>
+            </div>
+        `;
+
+        if (card.styles) this.applyCardStyleToEl(div, card.styles);
+
+        this.attachCardEvents(div, card.id);
+        grid.appendChild(div);
+    }
+
+    attachCardEvents(div, id) {
+        div.addEventListener('click', (e) => {
+            if (e.target.closest('button') || e.target.closest('.card-actions')) return;
+            if (this.selectedIds.size > 0) {
+                e.stopPropagation();
+                this.toggleSelect(id, e);
+                return;
+            }
+            div.classList.toggle('flipped');
+        });
+
+        let lastTap = 0;
+        div.addEventListener('touchend', (e) => {
+            const currentTime = new Date().getTime();
+            const tapLength = currentTime - lastTap;
+            if (tapLength < 300 && tapLength > 0) {
+                if (e.target.closest('button') || e.target.closest('.card-actions')) return;
+                this.openFullscreen(id);
+                e.preventDefault();
+            }
+            lastTap = currentTime;
+        });
+        div.addEventListener('dblclick', (e) => {
+            if (!e.target.closest('button')) this.openFullscreen(id);
+        });
+
+        let pressTimer;
+        div.addEventListener('touchstart', (e) => {
+            if (this.selectedIds.size > 0) return;
+            pressTimer = setTimeout(() => {
+                this.openCardMenu(id, e);
+                if (navigator.vibrate) navigator.vibrate(50);
+            }, 400);
+        });
+        div.addEventListener('touchend', () => clearTimeout(pressTimer));
+        div.addEventListener('touchmove', () => clearTimeout(pressTimer));
+
+             div.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') div.classList.toggle('flipped');
+            if (e.key === ' ' && e.shiftKey) {
+                e.preventDefault();
+                this.openCardMenu(id);
+            }
+        });
+    }
+
+    handleSendClick() {
+        const input = document.getElementById('userInput');
+        const val = input.value.trim();
+        if (!val) return;
+
+        if (this.isListening) {
+            this.recognition.stop();
+        }
+
+        this.sendRequest(val);
+        input.value = '';
+    }
+
+    scrollToStreamingContent(element) {
+        if (!element) return;
+        const isNearBottom = (element.scrollHeight - element.scrollTop - element.clientHeight) < 150;
+        if (isNearBottom) {
+            element.scrollTop = element.scrollHeight;
+        }
+    }
+
+    async sendRequest(prompt, contextCardId = null) {
+        this.streamingId = contextCardId ? contextCardId : this.addCard(prompt, '...', {});
+
+        const cardEl = document.querySelector(`.flip-card[data-id="${this.streamingId}"]`);
+        if(cardEl && !contextCardId) setTimeout(() => cardEl.classList.add('flipped'), 100);
+
+        // Prepare messages for your backend
+        const messages = [
+            { role: 'system', content: SYSTEM_PROMPT }
+        ];
+
+        if (contextCardId) {
+            const oldCard = this.cards.find(c => c.id === contextCardId);
+            if (oldCard) {
+                messages.push({ role: 'user', content: oldCard.q });
+                messages.push({ role: 'assistant', content: oldCard.r });
+            }
+        }
+
+        messages.push({ role: 'user', content: prompt });
+
+        this.abortController = new AbortController();
+        const signal = this.abortController.signal;
+
+        try {
+            const url = this.getProxyUrl();
+            const res = await fetch(`${url}/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ 
+                    messages: messages,
+                    model: '@preset/default',
+                    userId: this.userId,
+                    sessionId: this.sessionId,
+                    enableSearch: false,
+                    maxContext: 32000
+                }),
+                signal
+            });
+
+            if (!res.ok) throw new Error(`Proxy Error: ${res.status}`);
+
+            const reader = res.body.getReader();
+            let buffer = '';
+            let accumulated = '';
+            let isFirstChunk = true;
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += this.decoder.decode(value, { stream: true });
+
+                const lines = buffer.split('\n\n');
+                buffer = lines.pop() || '';
+                for (const line of lines) {
+                    const jsonStr = line.replace('data: ', '').trim();
+                    if (!jsonStr || jsonStr === '[DONE]') continue;
+                    try {
+                        const json = JSON.parse(jsonStr);
+                        const chunk = json.choices?.[0]?.delta?.content;
+                        if (chunk) {
+                            accumulated += chunk;
+                            if (isFirstChunk) {
+                                this.updateStreamingContent(accumulated, true);
+                                isFirstChunk = false;
+                            } else {
+                                this.updateStreamingContent(accumulated, false);
+                            }
+                        }
+                    } catch {}
+                }
+            }
+
+            this.finalizeResponse(accumulated);
+
+        } catch (err) {
+            if (err.name === 'AbortError') {
+                const el = document.querySelector(`.flip-card[data-id="${this.streamingId}"] .response-content`);
+                if (el) el.innerHTML += '<div style="color:#ff6b6b; margin-top:10px;">[Stopped]</div>';
+            } else {
+                const el = document.querySelector(`.flip-card[data-id="${this.streamingId}"] .response-content`);
+                if (el) el.innerHTML = `<span style="color: #ff6b6b; font-weight: bold;">Error: ${err.message}</span>`;
+            }
+            this.streamingId = null;
+        } finally {
+            this.abortController = null;
+        }
+    }
+
+    stopStream() {
+        if (this.abortController) {
+            this.abortController.abort();
+            this.abortController = null;
+            this.showToast("Streaming stopped");
+        }
+    }
+
+    updateStreamingContent(text, replace = false) {
+        if (!this.streamingId) return;
+        const visible = text.replace(/![^!]+!/g, '');
+
+  
