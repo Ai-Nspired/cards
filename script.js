@@ -1,401 +1,381 @@
-const DEFAULT_PROXY_URL = "https://ai-proxy.ai-n.workers.dev";
-const STORAGE_KEY = "ai_ndraft_data_v2";
-const SYSTEM_PROMPT = `You are a helpful AI Document Drafter. You help build documents card by card.`;
+const KEY='ai_ncards_v3',DEF_PROXY='https://orproxy.ai-n.workers.dev';
+const SYS=`You are ai-ncards, a card-based document builder. 
+- Style with !theme:Name,Bg,CardBg,Text,Border,Primary! or !bg:#hex! !text:#hex! etc
+- Edit request: "New Request: [text]" / response: "New Response: [text]"
+- Actions: !action:merge! !action:clear! !action:view:grid!
+User speaks naturally. Build the doc.`;
 
-class App {
-    constructor() {
-        this.cards = [];
-        this.history = [];
-        this.sessionId = "sess_" + Date.now();
-        this.userId = "user_" + Math.random().toString(36).substr(2, 9);
-        this.theme = { name: 'ai-Ncards', primary: '#c41e3a', bg: '#121212', cardBg: '#1e1e1e', text: '#f5f5f5', border: '#333', locked: false };
-        this.settings = { view: 'list', autoTTS: false, asrEnabled: false, proxyUrl: '' };
-        this.streamingId = null;
-        this.selectedIds = new Set();
-        this.contextMenuTargetId = null;
-        this.fullscreenId = null;
-        this.fsFlipped = false;
-        this.editingId = null;
-        this.stylingId = null;
-        this.promptContext = null;
-        this.recognizer = null;
-        this.isListening = false;
-        this.decoder = new TextDecoder();
-        this.abortController = null;
-        this.connected = false;
-    }
+class App{
+ constructor(){
+  this.cards=[];this.hist=[];this.sid='sess_'+Date.now();this.uid='user_'+Math.random().toString(36).slice(2,9);
+  this.theme={name:'ai-ncards',primary:'#c41e3a',bg:'#0d0d0d',cardBg:'#1a1a2e',text:'#e8e8e8',border:'#2a2a3e',locked:false};
+  this.settings={view:'list',proxyUrl:''};
+  this.sid=null;this.sel=new Set;this.ctxId=null;this.fsId=null;this.fsFlip=false;this.stId=null;this.pCtx=null;
+  this.ab=null;this.dec=new TextDecoder;
+ }
 
-    async init() {
-        this.loadState();
-        this.applyTheme();
-        this.applyView();
-        this.bindEvents();
-        this.initASR();
-        this.renderAll();
-        this.updateToggles();
-        this.checkConnection();
-    }
+ // ─── Init ───
+ init(){
+  this.load();this.applyTheme();this.applyView();this.bind();this.render();this.updToggles();
+  const p=ge('proxyUrl');if(p&&this.settings.proxyUrl)p.value=this.settings.proxyUrl;
+  ge('stPad').oninput=e=>ge('stPadV').textContent=e.target.value;
+  ge('stRad').oninput=e=>ge('stRadV').textContent=e.target.value;
+ }
 
-    getProxyUrl() {
-        const inputVal = document.getElementById('proxyUrlInput')?.value?.trim();
-        if (inputVal) { this.settings.proxyUrl = inputVal; this.saveState(); return inputVal; }
-        return this.settings.proxyUrl || DEFAULT_PROXY_URL;
-    }
+ proxyUrl(){
+  const v=ge('proxyUrl')?.value.trim();
+  if(v){this.settings.proxyUrl=v;this.save();return v}
+  return this.settings.proxyUrl||DEF_PROXY;
+ }
 
-    async checkConnection() {
-        try { await fetch(`${this.getProxyUrl()}/health`, { method: 'GET', mode: 'no-cors', credentials: 'omit' }); this.connected = true; } catch (e) { this.connected = false; }
-    }
+ // ─── Events ───
+ bind(){
+  ge('sendBtn').onclick=()=>this.send();
+  ge('input').onkeydown=e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();this.send()}};
+  ge('menuBtn').onclick=()=>this.openModal('modalProxy');
+  ge('viewFab').onclick=()=>this.cycleView();
+  ge('undoBtn').onclick=()=>this.undo();
+  ge('cancelSel').onclick=()=>this.clearSel();
+  ge('mergeSel').onclick=()=>this.prompt('merge');
+  ge('deleteSel').onclick=()=>this.bulkDel();
+  ge('splitSel').onclick=()=>this.prompt('split');
+  ge('promptGo').onclick=()=>this.execPrompt();
+  ge('ctxMenu').onclick=e=>{
+   const b=e.target.closest('button');if(!b||!this.ctxId)return;
+   const a=b.dataset.act;if(a==='continue'||a==='magic'||a==='merge'||a==='split')this.handleAction(a,this.ctxId);
+   else{if(a==='undo')this.undo();else this.handleAction(a,this.ctxId)}
+   this.closeCtx();
+  };
+  qsa('.overlay').forEach(o=>{o.onclick=e=>{if(e.target===o)this.closeModal(o.id)}});
+ }
 
-    saveState() { localStorage.setItem(STORAGE_KEY, JSON.stringify({ cards: this.cards, theme: this.theme, settings: this.settings, sessionId: this.sessionId, userId: this.userId })); }
+ // ─── Storage ───
+ save(){
+  ls(KEY,JSON.stringify({cards:this.cards,theme:this.theme,settings:this.settings,sessionId:this.sid,userId:this.uid}));
+ }
+ load(){
+  try{const d=JSON.parse(ls(KEY));if(!d)return;this.cards=d.cards||[];this.theme={...this.theme,...d.theme};this.settings={...this.settings,...d.settings};this.sid=d.sessionId||this.sid;this.uid=d.userId||this.uid}catch{}
+ }
+ pushHist(t){
+  if(this.hist.length>10)this.hist.shift();
+  this.hist.push({cards:JSON.parse(JSON.stringify(this.cards)),theme:{...this.theme},ts:Date.now(),action:t});
+ }
+ undo(){
+  if(!this.hist.length)return toast("Nothing to undo");
+  const s=this.hist.pop();this.cards=s.cards;if(!this.theme.locked)this.theme=s.theme;
+  this.save();this.render();this.applyTheme();toast("Undid: "+s.action);
+ }
 
-    loadState() {
-        try {
-            const raw = localStorage.getItem(STORAGE_KEY);
-            if (raw) { const d = JSON.parse(raw); this.cards = d.cards || []; this.theme = { ...this.theme, ...d.theme }; this.settings = { ...this.settings, ...d.settings }; this.sessionId = d.sessionId || this.sessionId; this.userId = d.userId || this.userId; }
-        } catch (e) { console.error("Load failed", e); }
-    }
+ // ─── Cards ───
+ addCard(q,r,s={}){
+  const id=crypto.randomUUID(),c={id,q,r,styles:s};this.cards.push(c);this.pushHist("Add");this.renderCard(c,true);return id;
+ }
+ delCard(id){
+  this.cards=this.cards.filter(c=>c.id!==id);
+  qs(`.card[data-id="${id}"]`)?.remove();if(this.fsId===id)this.closeFs();this.save();
+ }
+ updCard(id,q,r){
+  const c=this.cards.find(x=>x.id===id);if(!c)return;
+  if(q!==null)c.q=q;if(r!==null)c.r=r;
+  const el=qs(`.card[data-id="${id}"]`);
+  if(el){
+   if(q!==null)el.querySelector('.face:first-child .face-c').innerHTML=this.md(q);
+   if(r!==null){const re=el.querySelector('.face-c:last-child');if(re)re.innerHTML=this.md(r)}
+  }
+  this.save();
+ }
 
-    pushHistory(actionType) {
-        if (this.history.length > 10) this.history.shift();
-        this.history.push({ cards: JSON.parse(JSON.stringify(this.cards)), theme: { ...this.theme }, timestamp: Date.now(), action: actionType });
-        this.showToast(`Saved: ${actionType}`);
-    }
+ // ─── Render ───
+ render(){
+  const g=ge('grid');g.innerHTML='';this.updCount();
+  this.cards.forEach(c=>this.renderCard(c,false));
+ }
+ renderCard(card,isNew){
+  const g=ge('grid');const div=document.createElement('div');
+  div.className=`card${isNew?' new':''}`;div.dataset.id=card.id;div.tabIndex=0;
+  if(card.styles?.locked)div.classList.add('locked');
+  const isStream=card.r==='...';
+  const rHtml=isStream?'<div class="thinking"><span>Thinking</span></div>':this.md(card.r);
+  div.innerHTML=`<div class="card-body"><div class="face"><div class="face-h"><span>Request</span><div class="actions"><button onclick="app.openCtx('${card.id}',event)"><i class="fas fa-ellipsis-v"></i></button><button onclick="app.toggleSel('${card.id}',event)"><i class="fas fa-check-circle"></i></button></div></div><div class="face-c">${this.md(card.q)}</div></div><div class="face back"><div class="face-h"><span>Response</span><div class="actions"><button onclick="app.readTTS('${card.id}',event)"><i class="fas fa-volume-up"></i></button><button onclick="app.openCtx('${card.id}',event)"><i class="fas fa-ellipsis-v"></i></button></div></div><div class="face-c">${rHtml}</div></div></div>`;
+  if(card.styles)this.applyStyle(div,card.styles);
+  this.attachEv(div,card.id);g.appendChild(div);
+  this.updCount();
+ }
 
-    async undo() {
-        if (this.history.length === 0) { this.showToast("Nothing to undo"); return; }
-        const lastState = this.history.pop();
-        this.cards = lastState.cards;
-        if (!this.theme.locked) this.theme = lastState.theme;
-        this.saveState();
-        this.renderAll();
-        this.applyTheme();
-        this.showToast("Undid: " + lastState.action);
-    }
+ attachEv(div,id){
+  div.onclick=e=>{
+   if(e.target.closest('button')||e.target.closest('.actions'))return;
+   if(this.sel.size){e.stopPropagation();this.toggleSel(id,e);return}
+   div.classList.toggle('flip');
+  };
+  let lastTap=0;
+  div.ontouchend=e=>{
+   const t=Date.now()-lastTap;
+   if(t<300&&t>0){if(!e.target.closest('button')){this.openFs(id);e.preventDefault()}}
+   lastTap=Date.now();
+  };
+  div.ondblclick=e=>{if(!e.target.closest('button'))this.openFs(id)};
+  let pt;
+  div.ontouchstart=e=>{if(this.sel.size)return;pt=setTimeout(()=>{this.openCtx(id,e);navigator.vibrate?.(50)},400)};
+  div.ontouchend=()=>clearTimeout(pt);div.ontouchmove=()=>clearTimeout(pt);
+ }
 
-    renderAll() {
-        const grid = document.getElementById('grid');
-        const empty = document.getElementById('emptyState');
-        grid.innerHTML = '';
-        if (this.cards.length === 0) { empty.style.display = 'flex'; }
-        else { empty.style.display = 'none'; this.cards.forEach(c => this.renderCard(c, false)); }
-    }
+ updCount(){ge('cardCount').textContent=this.cards.length}
 
-    renderCard(card, isNew) {
-        const grid = document.getElementById('grid');
-        const empty = document.getElementById('emptyState');
-        if (empty && empty.parentNode) empty.remove();
-        const div = document.createElement('div');
-        div.className = `flip-card ${isNew ? 'new' : ''}`;
-        div.dataset.id = card.id;
-        div.tabIndex = 0;
-        if (card.styles && card.styles.locked) div.classList.add('locked');
-        const rHtml = (card.r === '...') ? (this.streamingId === card.id ? '<div class="streaming"><span class="thinking-indicator">Thinking...</span><button class="stop-stream-btn" onclick="app.stopStream()">Stop</button></div>' : '<div class="streaming"><span class="thinking-indicator">Thinking...</span></div>') : this.md(card.r);
-        div.innerHTML = `
-            <div class="flip-card-inner">
-                <div class="card-face">
-                    <div class="card-header">
-                        <span style="font-size:11px; opacity:0.5;">REQ</span>
-                        <div class="card-actions">
-                            <button onclick="app.openCardMenu('${card.id}', event)"><i class="fas fa-ellipsis-v"></i></button>
-                            <button onclick="app.toggleSelect('${card.id}', event)"><i class="fas fa-check-circle"></i></button>
-                        </div>
-                    </div>
-                    <div class="content">${this.md(card.q)}</div>
-                </div>
-                <div class="card-face card-back">
-                    <div class="card-header">
-                        <span style="font-size:11px; opacity:0.5;">RESPONSE</span>
-                        <div class="card-actions">
-                            <button onclick="app.readCard('${card.id}', event)"><i class="fas fa-volume-up"></i></button>
-                            <button onclick="app.openCardMenu('${card.id}', event)"><i class="fas fa-ellipsis-v"></i></button>
-                        </div>
-                    </div>
-                    <div class="response-content">${rHtml}</div>
-                </div>
-            </div>
-        `;
-        if (card.styles) this.applyCardStyleToEl(div, card.styles);
-        this.attachCardEvents(div, card.id);
-        grid.appendChild(div);
-    }
+ // ─── Send / AI ───
+ send(){
+  const inp=ge('input');const v=inp.value.trim();if(!v)return;
+  this.streamReq(v);inp.value='';
+ }
 
-    attachCardEvents(div, id) {
-        div.addEventListener('click', (e) => {
-            if (e.target.closest('button') || e.target.closest('.card-actions')) return;
-            if (this.selectedIds.size > 0) { e.stopPropagation(); this.toggleSelect(id, e); return; }
-            div.classList.toggle('flipped');
-        });
-        let lastTap = 0;
-        div.addEventListener('touchend', (e) => {
-            const t = new Date().getTime();
-            if (t - lastTap < 300 && t - lastTap > 0) { if (e.target.closest('button')) return; this.openFullscreen(id); e.preventDefault(); }
-            lastTap = t;
-        });
-        let pressTimer;
-        div.addEventListener('touchstart', (e) => {
-            if (this.selectedIds.size > 0) return;
-            pressTimer = setTimeout(() => { this.openCardMenu(id, e); if (navigator.vibrate) navigator.vibrate(50); }, 400);
-        });
-        div.addEventListener('touchend', () => clearTimeout(pressTimer));
-        div.addEventListener('touchmove', () => clearTimeout(pressTimer));
-        div.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') div.classList.toggle('flipped');
-            if (e.key === ' ' && e.shiftKey) { e.preventDefault(); this.openCardMenu(id); }
-        });
-    }
+ async streamReq(prompt,ctxId=null){
+  this.sid=ctxId?ctxId:this.addCard(prompt,'...',{});
+  const el=qs(`.card[data-id="${this.sid}"]`);if(el&&!ctxId)setTimeout(()=>el.classList.add('flip'),100);
+  const msgs=[{role:'system',content:SYS}];
+  if(ctxId){const oc=this.cards.find(c=>c.id===ctxId);if(oc){msgs.push({role:'user',content:oc.q});msgs.push({role:'assistant',content:oc.r})}}
+  msgs.push({role:'user',content:prompt});
+  this.ab=new AbortController;
+  try{
+   const url=this.proxyUrl();
+   const res=await fetch(`${url}/chat`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:msgs,model:'@preset/default',userId:this.uid,sessionId:this.sid,enableSearch:false,maxContext:32e3}),signal:this.ab.signal});
+   if(!res.ok)throw new Error(`Proxy: ${res.status}`);
+   const reader=res.body.getReader();let buf='',acc='',first=true;
+   for(;;){const{done,value}=await reader.read();if(done)break;buf+=this.dec.decode(value,{stream:true});
+    const lines=buf.split('\n\n');buf=lines.pop()||'';
+    for(const line of lines){const js=line.replace('data: ','').trim();if(!js||js==='[DONE]')continue;
+     try{const j=JSON.parse(js);const c=j.choices?.[0]?.delta?.content;if(c){acc+=c;if(first){this.updStream(acc,true);first=false}else this.updStream(acc,false)}}catch{}}}
+   this.finalize(acc);
+  }catch(err){
+   if(err.name==='AbortError'){qs(`.card[data-id="${this.sid}"] .face-c:last-child`)?.[0]?.insertAdjacentHTML('beforeend','<div style="color:#ff5252;margin-top:8px">[Stopped]</div>')}
+   else{const el=qs(`.card[data-id="${this.sid}"] .face-c:last-child`);if(el)el.innerHTML=`<span style="color:#ff5252;font-weight:700">${err.message}</span>`}
+   this.sid=null;
+  }finally{this.ab=null}
+ }
 
-    async sendRequest(prompt, contextCardId = null) {
-        this.streamingId = contextCardId ? contextCardId : this.addCard(prompt, '...', {});
-        const cardEl = document.querySelector(`.flip-card[data-id="${this.streamingId}"]`);
-        if (cardEl && !contextCardId) setTimeout(() => cardEl.classList.add('flipped'), 100);
-        const messages = [{ role: 'system', content: SYSTEM_PROMPT }];
-        if (contextCardId) {
-            const oldCard = this.cards.find(c => c.id === contextCardId);
-            if (oldCard) {
-                messages.push({ role: 'user', content: oldCard.q });
-                messages.push({ role: 'assistant', content: oldCard.r });
-            }
-        }
-        messages.push({ role: 'user', content: prompt });
-        this.abortController = new AbortController();
-        try {
-            const res = await fetch(`${this.getProxyUrl()}/api/chat`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ messages: messages, model: '@preset/default', userId: this.userId, sessionId: this.sessionId, enableSearch: false, maxContext: 32000 }),
-                signal: this.abortController.signal,
-                credentials: 'omit'
-            });
-            if (!res.ok) throw new Error(`Proxy Error: ${res.status}`);
-            const reader = res.body.getReader();
-            let buffer = '', accumulated = '';
-            const processChunk = async () => {
-                const { done, value } = await reader.read();
-                if (done) { this.streamingId = null; return; }
-                buffer += this.decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n\n');
-                buffer = lines.pop() || '';
-                for (const line of lines) {
-                    const jsonStr = line.replace('data: ', '').trim();
-                    if (!jsonStr || jsonStr === '[DONE]') continue;
-                    try {
-                        const json = JSON.parse(jsonStr);
-                        const chunk = json.choices?.[0]?.delta?.content;
-                        if (chunk) { accumulated += chunk; this.updateStreamingContent(accumulated, lines.indexOf(line) === 0); }
-                    } catch { }
-                }
-                setTimeout(processChunk, 1);
-            };
-            processChunk();
-        } catch (err) {
-            if (err.name === 'AbortError') { const el = document.querySelector(`.flip-card[data-id="${this.streamingId}"] .response-content`); if (el) el.innerHTML += '<div style="color:#ff6b6b; margin-top:10px;">[Stopped]</div>'; }
-            else { const el = document.querySelector(`.flip-card[data-id="${this.streamingId}"] .response-content`); if (el) el.innerHTML = `<span style="color: #ff6b6b; font-weight: bold;">Error: ${err.message}</span>`; }
-            this.streamingId = null;
-        } finally { this.abortController = null; }
-    }
+ updStream(text,replace=false){
+  if(!this.sid)return;const v=text.replace(/![^!]+!/g,'');
+  const el=qs(`.card[data-id="${this.sid}"] .face:last-child .face-c`);
+  if(el){el.innerHTML=replace?this.md(v):this.md(v)+'<span class="cursor"></span>'}
 
-    stopStream() { if (this.abortController) { this.abortController.abort(); this.abortController = null; } }
+  if(this.fsId===this.sid){ge('fsContent').innerHTML=replace?this.md(v):this.md(v)+'<span class="cursor"></span>'}
+ }
 
-    updateStreamingContent(text, isFirst) {
-        const el = document.querySelector(`.flip-card[data-id="${this.streamingId}"] .response-content`);
-        if (el) { el.innerHTML = this.md(text); if (isFirst) el.parentElement.parentElement.classList.add('flipped'); this.scrollToStreamingContent(el); }
-    }
+ finalize(full){
+  const id=this.sid;if(!id)return;
+  const{clean,styles,themeUp,actions}=this.parseCmd(full);
+  const card=this.cards.find(c=>c.id===id);
+  if(card){
+   let nq=null,nr=null;
+   const rm=clean.match(/New Request:\s*(.+)/i),rpm=clean.match(/New Response:\s*(.+)/i);
+   if(rm)nq=rm[1].trim();if(rpm)nr=rpm[1].trim();
+   if(nq&&!nr)nr=card.r;
+   if(nq||nr){if(nq)card.q=nq;if(nr)card.r=nr}else{
+    if(!(card.styles?.locked)&&Object.keys(styles).length)card.styles={...card.styles,...styles};
+    if(clean)card.r=clean;
+   }
+  }
+  const finalT=card?card.r:clean;
+  const el=qs(`.card[data-id="${id}"] .face:last-child .face-c`);if(el)el.innerHTML=this.md(finalT);
+  if(this.fsId===id)ge('fsContent').innerHTML=this.md(finalT);
+  if(themeUp&&!this.theme.locked){this.theme={...this.theme,...themeUp};this.applyTheme()}
+  if(card&&!(card.styles?.locked)&&Object.keys(styles).length){card.styles={...card.styles,...styles};const cel=qs(`.card[data-id="${id}"]`);if(cel)this.applyStyle(cel,card.styles)}
+  actions.forEach(a=>{if(a==='merge')this.prompt('merge');if(a==='clear')this.clearAll();if(a.startsWith('view:')){this.settings.view=a.split(':')[1];this.applyView()}});
+  this.save();this.sid=null;
+  this.render();
+ }
 
-    finalizeResponse(text) { const el = document.querySelector(`.flip-card[data-id="${this.streamingId}"] .response-content`); if (el) el.innerHTML = this.md(text); this.streamingId = null; }
+ parseCmd(text){
+  const re=/!(theme|bg|text|border|pad|radius|font|bold|italic|css|action):?([^!]+)!/gi;
+  let styles={},actions=[],themeUp=null,match,safe=text;
+  while((match=re.exec(text))){
+   const t=match[1].toLowerCase(),v=match[2].trim();
+   if(t==='theme'){const[nm,bg,cb,tc,bo,pr]=v.split(',').map(s=>s.trim());themeUp={name:nm,bg,cardBg:cb,text:tc,border:bo,primary:pr}}
+   else if(t==='bg')styles.backgroundColor=v;else if(t==='text')styles.color=v;else if(t==='border')styles.borderColor=v;
+   else if(t==='pad')styles.padding=v.endsWith('px')?v:v+'px';else if(t==='radius')styles.borderRadius=v.endsWith('px')?v:v+'px';
+   else if(t==='font')styles.fontSize=v.endsWith('px')?v:v+'px';else if(t==='bold')styles.fontWeight='bold';else if(t==='italic')styles.fontStyle='italic';
+   else if(t==='css')styles.customCSS=v;else if(t==='action')actions.push(v);
+   safe=safe.replace(match[0],'');
+  }
+  return{clean:safe.trim(),styles,themeUp,actions};
+ }
 
-    scrollToStreamingContent(el) { if (!el) return; const isNearBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < 150; if (isNearBottom) el.scrollTop = el.scrollHeight; }
+ applyStyle(el,styles){
+  el.querySelectorAll('.face').forEach(f=>{
+   if(styles.color)f.style.color=styles.color;if(styles.backgroundColor)f.style.backgroundColor=styles.backgroundColor;
+   if(styles.fontSize)f.style.fontSize=styles.fontSize;if(styles.fontWeight)f.style.fontWeight=styles.fontWeight;
+   if(styles.fontStyle)f.style.fontStyle=styles.fontStyle;if(styles.padding)f.style.padding=styles.padding;
+  });
+  if(styles.borderColor)el.style.borderColor=styles.borderColor;
+  if(styles.borderRadius)el.style.borderRadius=styles.borderRadius;
+ }
 
-    addCard(q, r, styles = {}) {
-        const id = Math.random().toString(36).substr(2, 9);
-        this.cards.push({ id, q, r, styles });
-        this.pushHistory("Add Card");
-        this.renderCard({ id, q, r, styles }, true);
-        return id;
-    }
+ // ─── Context Menu ───
+ openCtx(id,e){
+  e?.preventDefault?.();e?.stopPropagation?.();
+  this.ctxId=id;const m=ge('ctxMenu');
+  let x=e?.clientX??window.innerWidth/2,y=e?.clientY??window.innerHeight/2;
+  if(x+180>innerWidth)x=innerWidth-190;if(y+260>innerHeight)y=innerHeight-270;
+  m.style.left=x+'px';m.style.top=y+'px';m.classList.add('show');
+ }
+ closeCtx(){ge('ctxMenu').classList.remove('show');this.ctxId=null}
 
-    deleteCard(id) {
-        this.cards = this.cards.filter(c => c.id !== id);
-        const el = document.querySelector(`.flip-card[data-id="${id}"]`);
-        if (el) el.remove();
-        if (this.fullscreenId === id) this.closeFullscreen();
-        this.saveState();
-    }
+ handleAction(a,id){
+  const c=this.cards.find(x=>x.id===id);if(!c)return;
+  switch(a){
+   case'continue':this.prompt('continue',id);break;
+   case'split':this.prompt('split',id);break;
+   case'merge':this.sel.add(id);qs(`.card[data-id="${id}"]`)?.classList.add('sel');if(this.sel.size<2)toast("Select 2+ cards");this.updSelUI();this.prompt('merge');break;
+   case'magic':this.prompt('magic',id);break;
+   case'copy':navigator.clipboard.writeText(c.r||c.q||'');toast('Copied');break;
+   case'fullscreen':this.openFs(id);break;
+   case'delete':if(confirm("Delete?")){this.delCard(id);toast('Deleted')};break;
+   case'style':this.stId=id;this.loadStyle(c.styles||{});this.openModal('modalStyle');break;
+  }
+ }
 
-    updateCardContent(id, q, r) {
-        const card = this.cards.find(c => c.id === id);
-        if (!card) return;
-        if (q !== null) card.q = q;
-        if (r !== null) card.r = r;
-        const el = document.querySelector(`.flip-card[data-id="${id}"]`);
-        if (el) {
-            if (q !== null) el.querySelector('.card-face:first-child .content').innerHTML = this.md(card.q);
-            if (r !== null) {
-                const rEl = el.querySelector('.response-content');
-                if (rEl) rEl.innerHTML = this.md(r);
-            }
-        }
-        this.saveState();
-    }
+ // ─── Selection ───
+ toggleSel(id,e){
+  e?.stopPropagation?.();const el=qs(`.card[data-id="${id}"]`);
+  if(this.sel.has(id)){this.sel.delete(id);el?.classList.remove('sel')}else{this.sel.add(id);el?.classList.add('sel')}
+  this.updSelUI();
+ }
+ updSelUI(){
+  const b=ge('selectionBar');
+  if(this.sel.size){b.classList.add('show');ge('selCount').textContent=this.sel.size}else b.classList.remove('show');
+ }
+ clearSel(){this.sel.forEach(id=>qs(`.card[data-id="${id}"]`)?.classList.remove('sel'));this.sel.clear();this.updSelUI()}
+ bulkDel(){if(!this.sel.size)return;if(confirm(`Delete ${this.sel.size} cards?`)){this.pushHist("Bulk Delete");this.sel.forEach(id=>this.delCard(id));this.clearSel();toast(`Deleted ${this.sel.size}`)}}
 
-    bindEvents() {
-        document.getElementById('sendBtn').addEventListener('click', () => this.handleSendClick());
-        const input = document.getElementById('userInput');
-        input.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); this.handleSendClick(); }
-        });
-        document.getElementById('menuFab').addEventListener('click', () => this.openModal('settingsModal'));
-        document.getElementById('viewFab').addEventListener('click', () => this.cycleView());
-        document.getElementById('undoFabTop').addEventListener('click', () => this.undo());
-        document.getElementById('cancelSelect').addEventListener('click', () => this.clearSelection());
-        document.getElementById('mergeSelected').addEventListener('click', () => this.promptAction('merge'));
-        document.getElementById('deleteSelected').addEventListener('click', () => this.bulkDelete());
-        document.getElementById('splitSelected').addEventListener('click', () => this.promptAction('split'));
-        document.querySelectorAll('.modal-overlay').forEach(overlay => {
-            overlay.addEventListener('click', (e) => { if (e.target === overlay) { const id = overlay.id; this.closeModal(id); } });
-        });
-        document.getElementById('promptConfirmBtn').addEventListener('click', () => this.executePromptAction());
-        document.getElementById('styleApply').addEventListener('click', () => this.applyStyle());
-        document.getElementById('themeConfirm').addEventListener('click', () => this.applyAITheme());
-        document.getElementById('closeFs').addEventListener('click', () => this.closeFullscreen());
-    }
+ // ─── Prompt Actions ───
+ prompt(action,id=null){
+  if(!id&&this.sel.size)id=Array.from(this.sel)[0];
+  if(!id&&action!=='merge')return;
+  this.pCtx={action,id};
+  const ti=ge('promptTitle'),de=ge('promptDesc'),ar=ge('promptArea');
+  const labels={magic:['Magic Action','Edit text, change styles, or use !action:...','Execute','e.g., Make professional'],continue:['Continue','Continue the response.','Continue','Continue the thought...'],split:['Split Card','How to split this content?','Split','Split into points...'],merge:['Merge Cards','Combine selected cards.','Merge ('+this.sel.size+')','Merge into summary...']};
+  const[l,t,bt,p]=labels[action]||['Action','','Go',''];
+  ti.textContent=l;de.textContent=t;ar.placeholder=p||'Instructions...';
+  this.openModal('modalPrompt');
+ }
 
-    handleSendClick() {
-        const input = document.getElementById('userInput');
-        const val = input.value.trim();
-        if (!val) return;
-        if (this.isListening) { this.recognition.stop(); return; }
-        this.sendRequest(val);
-        input.value = '';
-    }
+ execPrompt(){
+  const instructions=ge('promptArea').value.trim(),{action,id}=this.pCtx;
+  const c=this.cards.find(x=>x.id===id);
+  this.closeModal('modalPrompt');ge('promptArea').value='';
+  if(action==='merge'){this.mergeCards(instructions);return}
+  if(!c)return;
+  if(action==='magic')this.streamReq(`Current Request: "${c.q}". Current Response: "${c.r}". INSTRUCTIONS: ${instructions}`,id);
+  else if(action==='continue')this.streamReq(`CONTINUE: Original: "${c.q}". Current: "${c.r}". Instruct: ${instructions}`,id);
+  else if(action==='split')this.streamReq(`SPLIT: ${instructions}. Text: ${c.r}`,null);
+  toast("Processing...");
+ }
 
-    toggleSelect(id, e) {
-        if (e) e.stopPropagation();
-        const el = document.querySelector(`.flip-card[data-id="${id}"]`);
-        if (this.selectedIds.has(id)) { this.selectedIds.delete(id); el.classList.remove('selected'); }
-        else { this.selectedIds.add(id); el.classList.add('selected'); }
-        this.updateSelectionUI();
-    }
+ mergeCards(instructions=""){
+  if(this.sel.size<2)return toast("Select 2+ cards");
+  const sel=Array.from(this.sel).map(id=>this.cards.find(c=>c.id===id));
+  const content=sel.map(c=>`---\n${c.q}\n${c.r}`).join('\n');
+  const prompt=instructions?`Merge these based on: ${instructions}\n\n${content}`:`Combine these:\n\n${content}`;
+  const id=this.addCard(`Merged ${sel.length} cards`,'...',{});
+  this.sid=id;this.clearSel();
+  this.streamReq(prompt,id);
+ }
 
-    updateSelectionUI() {
-        const bar = document.getElementById('selectionBar');
-        const cnt = document.getElementById('selectCount');
-        if (this.selectedIds.size > 0) { bar.classList.add('active'); cnt.textContent = this.selectedIds.size; }
-        else bar.classList.remove('active');
-    }
+ // ─── Style Modal ───
+ loadStyle(styles){
+  ge('lockStyle').checked=!!styles.locked;
+  ge('stColor').value=styles.color||'#e8e8e8';ge('stBg').value=styles.backgroundColor||'#1a1a2e';ge('stBorder').value=styles.borderColor||'#2a2a3e';
+  ge('stPad').value=parseInt(styles.padding||'14');ge('stRad').value=parseInt(styles.borderRadius||'12');
+  ge('stPadV').textContent=parseInt(styles.padding||'14');ge('stRadV').textContent=parseInt(styles.borderRadius||'12');
+ }
+ saveStyle(){
+  if(!this.stId)return;
+  const styles={locked:ge('lockStyle').checked,color:ge('stColor').value,backgroundColor:ge('stBg').value,borderColor:ge('stBorder').value,padding:ge('stPad').value+'px',borderRadius:ge('stRad').value+'px'};
+  const card=this.cards.find(c=>c.id===this.stId);
+  if(card){card.styles={...card.styles,...styles};this.save();const el=qs(`.card[data-id="${this.stId}"]`);if(el){this.applyStyle(el,styles);if(styles.locked)el.classList.add('locked');else el.classList.remove('locked')}this.pushHist("Style");this.closeModal('modalStyle')}
+ }
 
-    clearSelection() {
-        this.selectedIds.forEach(id => { const el = document.querySelector(`.flip-card[data-id="${id}"]`); if (el) el.classList.remove('selected'); });
-        this.selectedIds.clear(); this.updateSelectionUI();
-    }
+ // ─── Fullscreen ───
+ openFs(id){
+  const c=this.cards.find(x=>x.id===id);if(!c)return;
+  this.fsId=id;this.fsFlip=false;
+  ge('fsContent').innerHTML=this.md(c.r);
+  ge('fullscreen').classList.add('show');
+ }
+ closeFs(){ge('fullscreen').classList.remove('show');this.fsId=null;this.fsFlip=false}
+ toggleFsFlip(){this.fsFlip=!this.fsFlip;const c=this.cards.find(x=>x.id===this.fsId);if(!c)return;ge('fsContent').innerHTML=this.md(this.fsFlip?c.q:c.r)}
+ toggleNative(){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen()}
+ readFs(){const c=this.cards.find(x=>x.id===this.fsId);if(!c)return;const t=this.fsFlip?c.q:c.r;if(t)responsiveVoice?.speak(t.replace(/[#*_`>~-]/g,'').slice(0,2e3),"US English Female",{rate:1.1})}
 
-    bulkDelete() {
-        if (this.selectedIds.size === 0) return;
-        if (confirm(`Delete ${this.selectedIds.size} cards?`)) {
-            this.pushHistory("Bulk Delete");
-            this.selectedIds.forEach(id => this.deleteCard(id));
-            this.clearSelection();
-        }
-    }
+ // ─── View ───
+ cycleView(){const v=['list','grid','full'];const i=v.indexOf(this.settings.view);this.settings.view=v[(i+1)%v.length];this.applyView();this.save()}
+ setView(v){this.settings.view=v;this.applyView();this.save();this.closeModal('modalProxy')}
+ applyView(){
+  document.body.className='view-'+this.settings.view;
+  const m={list:'fas fa-list',grid:'fas fa-th',full:'fas fa-expand'};
+  qs('#viewFab i').className=m[this.settings.view]||'fas fa-columns';
+ }
 
-    openModal(id) { document.getElementById(id).classList.add('active'); }
-    closeModal(id) { document.getElementById(id)?.classList.remove('active'); }
+ // ─── Theme ───
+ applyTheme(){
+  const r=document.documentElement;
+  r.style.setProperty('--p',this.theme.primary);r.style.setProperty('--bg',this.theme.bg);r.style.setProperty('--cb',this.theme.cardBg);r.style.setProperty('--t',this.theme.text);r.style.setProperty('--b',this.theme.border);
+ }
+ toggleTheme(){
+  const d=this.theme.bg==='#0d0d0d';
+  this.theme.bg=d?'#f5f5f5':'#0d0d0d';this.theme.cardBg=d?'#fff':'#1a1a2e';this.theme.text=d?'#222':'#e8e8e8';this.theme.border=d?'#ddd':'#2a2a3e';
+  this.applyTheme();this.save();this.closeModal('modalProxy')
+ }
+ toggleLock(){this.theme.locked=!this.theme.locked;this.applyTheme();this.save();toast(this.theme.locked?'Locked':'Unlocked')}
+ updToggles(){}
 
-    promptAction(action, id = null) {
-        if (!id && this.selectedIds.size > 0) id = Array.from(this.selectedIds)[0];
-        if (!id && action !== 'merge') return;
-        this.promptContext = { action, id };
-        const title = document.getElementById('promptTitle'), desc = document.getElementById('promptDesc'), btn = document.getElementById('promptConfirmBtn'), area = document.getElementById('promptArea');
-        if (action === 'magic') { title.textContent = "Magic Action"; desc.textContent = "Edit text, change styles, or use !action:..."; btn.textContent = "Execute"; area.placeholder = "e.g., 'Edit Request to be professional'"; }
-        else if (action === 'continue') { title.textContent = "Continue Card"; desc.textContent = "Instruct the AI on how to continue the response."; btn.textContent = "Continue"; area.placeholder = "Continue the thought..."; }
-        else if (action === 'split') { title.textContent = "Split Card"; desc.textContent = "How should the AI split this content?"; btn.textContent = "Split"; area.placeholder = "Split into two points..."; }
-        else if (action === 'merge') { title.textContent = "Merge Cards"; desc.textContent = "Combine selected cards. Instructions?"; btn.textContent = `Merge (${this.selectedIds.size})`; area.placeholder = "Merge into a summary..."; }
-        this.openModal('promptModal');
-    }
+ // ─── Data ───
+ exportData(){
+  const d={cards:this.cards,theme:this.theme,settings:this.settings,sessionId:this.sid,userId:this.uid};
+  const b=new Blob([JSON.stringify(d,null,2)],{type:'application/json'}),a=document.createElement('a');
+  a.href=URL.createObjectURL(b);a.download=`ncards_${Date.now()}.json`;a.click();toast("Exported");this.closeModal('modalProxy')
+ }
+ importData(inp){
+  const f=inp.files[0];if(!f)return;
+  const r=new FileReader;
+  r.onload=e=>{
+   try{const d=JSON.parse(e.target.result);this.pushHist("Import");this.cards=d.cards||[];this.theme=d.theme||this.theme;this.settings=d.settings||this.settings;this.sid=d.sessionId||this.sid;this.uid=d.userId||this.uid;this.render();this.applyTheme();this.applyView();this.save();toast("Imported");this.closeModal('modalProxy')}catch{alert("Invalid JSON")}
+  };r.readAsText(f);inp.value='';
+ }
+ clearAll(){if(confirm("Clear all cards?")){this.pushHist("Clear");this.cards=[];this.save();this.render();this.closeModal('modalProxy');toast("Cleared")}}
 
-    executePromptAction() {
-        const instructions = document.getElementById('promptArea').value.trim();
-        const { action, id } = this.promptContext;
-        const card = this.cards.find(c => c.id === id);
-        this.closeModal('promptModal'); document.getElementById('promptArea').value = '';
-        if (!card && action !== 'merge') return;
-        if (action === 'merge') { this.merge(instructions); return; }
-        let userPrompt = "";
-        if (action === 'magic') userPrompt = `Current Request: "${card.q}". Current Response: "${card.r}". INSTRUCTIONS: ${instructions}`;
-        else if (action === 'continue') userPrompt = `CONTINUE: Original: "${card.q}". Current: "${card.r}". Instruct: ${instructions}`;
-        else if (action === 'split') userPrompt = `SPLIT: ${instructions}. Text: ${card.r}`;
-        this.sendRequest(userPrompt, (action === 'magic' || action === 'continue') ? id : null);
-        this.showToast("Processing...");
-    }
+ // ─── Cloud Sync (Worker) ───
+ async syncToWorker(){
+  const url=this.proxyUrl();const api=url.replace('/chat','');
+  try{
+   const res=await fetch(`${api}/api/cards`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question:'Bulk sync',response:JSON.stringify(this.cards)})});
+   toast(res.ok?"Pushed to cloud":"Sync failed")
+  }catch{toast("Sync failed")}
+ }
+ async syncFromWorker(){
+  const url=this.proxyUrl();const api=url.replace('/chat','');
+  try{
+   const res=await fetch(`${api}/api/cards`);const d=await res.json();
+   if(d.cards?.length){this.pushHist("Cloud Pull");this.cards=d.cards.map(c=>({id:c.id,q:c.q,r:c.r,styles:c.styles||{}}));this.save();this.render();toast(`Pulled ${d.cards.length} cards`)}}catch{toast("Pull failed")}
+ }
 
-    applyStyle() {
-        const bg = document.getElementById('styleBg').value, text = document.getElementById('styleText').value, border = document.getElementById('styleBorder').value, primary = document.getElementById('stylePrimary').value, locked = document.getElementById('styleLocked').checked;
-        this.theme = { ...this.theme, bg, text, border, primary, locked };
-        this.applyTheme(); this.saveState(); this.closeModal('styleModal');
-    }
+ // ─── TTS ───
+ readTTS(id,e){
+  e?.stopPropagation?.();const c=this.cards.find(x=>x.id===id);if(!c?.r)return;
+  if(responsiveVoice?.isPlaying())responsiveVoice.cancel();else responsiveVoice?.speak(c.r.replace(/[#*_`>~-]/g,'').slice(0,2e3),"US English Female",{rate:1.1})
+ }
 
-    applyCardStyleToEl(el, styles) {
-        if (styles.color) el.querySelector('.content').style.color = styles.color;
-        if (styles.bg) el.style.background = styles.bg;
-        if (styles.border) el.style.borderColor = styles.border;
-    }
+ // ─── Modals ───
+ openModal(id){ge(id).classList.add('show')}
+ closeModal(id){ge(id).classList.remove('show');if(id==='modalPrompt')this.pCtx=null;if(id==='modalStyle')this.stId=null}
 
-    applyTheme() {
-        const r = document.documentElement; r.style.setProperty('--primary', this.theme.primary); r.style.setProperty('--bg', this.theme.bg); r.style.setProperty('--card-bg', this.theme.cardBg); r.style.setProperty('--text', this.theme.text); r.style.setProperty('--border', this.theme.border);
-        document.getElementById('brand').textContent = this.theme.name;
-    }
-
-    applyAITheme() {
-        const desc = document.getElementById('aiThemePrompt').value.trim();
-        if (!desc || this.theme.locked) { if (this.theme.locked) this.showToast("Theme Locked"); this.closeModal('themeModal'); return; }
-        const prompt = `Generate ONLY a style definition in this exact format:\n!theme:Name,BgHex,CardBgHex,TextHex,BorderHex,PrimaryHex!\nBased on this vibe: ${desc}\nDo not output any other text.`;
-        this.closeModal('themeModal'); this.showToast("Generating Theme...");
-        fetch(`${this.getProxyUrl()}/api/chat`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ messages: [{ role: 'system', content: SYSTEM_PROMPT }, { role: 'user', content: prompt }], model: '@preset/default', userId: this.userId, sessionId: this.sessionId, enableSearch: false, maxContext: 32000 }),
-            credentials: 'omit'
-        }).then(res => {
-            const reader = res.body.getReader(); let full = '', buf = '';
-            const read = () => reader.read().then(({ done, value }) => {
-                if (done) { const m = full.match(/!theme:([^!]+)!,([^,]+),([^,]+),([^,.]+),([^,]+),(.+)/);
-                    if (m) { this.theme = { name: m[1], bg: m[2], cardBg: m[3], text: m[4], border: m[5], primary: m[6], locked: false }; this.applyTheme(); this.saveState(); this.showToast(`Theme: ${m[1]}`); }
-                    else this.showToast("Theme parse failed");
-                    return;
-                }
-                buf += this.decoder.decode(value, { stream: true });
-                const lines = buf.split('\n\n');
-                buf = lines.pop() || '';
-                lines.forEach(l => { const s = l.replace('data: ', '').trim(); if (s && s !== '[DONE]') try { const j = JSON.parse(s); const c = j.choices?.[0]?.delta?.content; if (c) full += c; } catch {}});
-                read();
-            }); read();
-        }).catch(() => this.showToast("Theme failed"));
-    }
-
-    updateToggles() {
-        const a = document.getElementById('asrToggle'), t = document.getElementById('ttsToggle');
-        if (a) a.classList.toggle('active', this.settings.asrEnabled);
-        if (t) t.classList.toggle('active', this.settings.autoTTS);
-    }
-
-    toggleASR() { this.settings.asrEnabled = !this.settings.asrEnabled; this.updateToggles(); this.saveState(); }
-    toggleTTS() { this.settings.autoTTS = !this.settings.autoTTS; this.updateToggles(); this.saveState(); }
-
-    initASR() {
-        const Sr = window.SpeechRecognition || window.webkitSpeechRecognition;
-        if (!Sr) { this.showToast('Speech not supported'); return; }
-        this.recognition = new Sr();
-        this.recognition.continuous = false; this.recognition.interimResults = false; this.recognition.lang = 'en-US';
-        this.recognition.onstart = () => { this.isListening = true; const b = document.getElementById('sendBtn'); b.innerHTML = '<i class="fas fa-microphone"></i>'; b.classList.add('listening'); };
-        this.recognition.onerror = () => { this.isListening = false; const b = document.getElementById('sendBtn'); b.innerHTML = '🎤'; b.classList.remove('listening'); };
-        this.recognition.onend = () => { this.isListening = false; const b = document.getElementById('sendBtn'); b.innerHTML = '🎤'; b.classList.remove('listening'); };
-        this.recognition.onresult = (e) => { document.getElementById('userInput').value = e.results[0][0].transcript; };
-    }
-
-    cycleView() { const v = ['list','grid','full']; const i = v.indexOf(this.settings.view); this.settings.view = v[(i+1)%v.length]; this.applyView(); this.saveState(); this.showToast(`View: ${this.settings.view}`); }
-    setCardView(v) { this.settings.view = v; this.applyView(); this.saveState(); this.showToast(`View: ${v}`); }
-    applyView() { document.body.className = `view-${this.settings.view}`; }
-    toggleThemeMode() { this.theme.bg = this.theme.bg === '#121212' ? '#f8f9fa' : '#121212'; this.theme.cardBg = this.theme.bg === '#121212' ? '#1e1e1e' : '#ffffff'; this.applyTheme(); this.saveState(); this.showToast(this.theme.bg === '#121212' ? 'Dark Mode' : 'Light Mode'); }
-    toggleThemeLock() { this.theme.locked = !this.theme.locked; this.applyTheme(); this.saveState(); this.showToast(this.theme.locked ? 'Theme Locked' : 'Theme Unlocked'); }
-    showToast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2000); }
+ // ─── Markdown ───
+ md(text){if(!text)return'';try{return DOMPurify.sanitize(marked.parse(text))}catch{return text}}
 }
 
-document.addEventListener('DOMContentLoaded', () => { window.app = new App(); window.app.init(); });
+// ─── Helpers ───
+const $=s=>document.querySelector(s),$$=s=>document.querySelectorAll(s),ge=i=>document.getElementById(i),qs=$;
+function ls(k,v){if(v===undefined)return localStorage.getItem(k);localStorage.setItem(k,v)}
+function toast(m){const t=ge('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),1800)}
+
+// ─── Init ───
+document.addEventListener('DOMContentLoaded',()=>{window.app=new App;window.app.init()});
