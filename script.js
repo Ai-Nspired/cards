@@ -1,4 +1,4 @@
-javascript
+//javascript
 // ============================================================
 // ai-ncards — App (frontend) Integrated with New Worker Backend
 // Uses OpenRouter streaming (SSE) with model inclusionai/ling-2.6-flash
