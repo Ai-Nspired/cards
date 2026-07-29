@@ -361,11 +361,11 @@ async function handleChat(request, env) {
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
-        "HTTP-Referer": "https://ai-n.workers.dev",
+        "HTTP-Referer": "https://ai.nspired.cc",
         "X-Title": "cards",
       },
       body: JSON.stringify({
-        model: "openai/gpt-4o-mini",
+        model: "inclusionai/ling-2.6-flash",
         messages: [
           { role: "system", content: "You are ai-ncards, a card-based document builder. Keep responses concise. Support actions: !action:merge! !action:clear! !action:view:grid! and theme: !theme:Name,Primary,Bg,CardBg,Text,Border!" },
           { role: "user", content: fullPrompt },
@@ -387,7 +387,7 @@ async function handleChat(request, env) {
 
     // Cache in KV (TTL: 1 hour)
     if (env.KV) {
-      await env.kv.put(cacheKey, responseText, { expirationTtl: 3600 });
+      await env.KV.put(cacheKey, responseText, { expirationTtl: 3600 });
     }
 
     return new Response(JSON.stringify({ response: responseText, cached: false }), {
