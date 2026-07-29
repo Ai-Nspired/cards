@@ -1,4 +1,4 @@
-const DEFAULT_PROXY_URL = "https://ai-proxy.ai-n.workers.dev/api/generate";
+const DEFAULT_PROXY_URL = "https://ai.nspired.cc/chat";
 const STORAGE_KEY = "ai_ndraft_data_v2";
 
 const SYSTEM_PROMPT = `You are a helpful, casual AI assistant. You can control styling and app behavior.
@@ -20,7 +20,7 @@ class App {
         this.history = []; 
         this.sessionId = "sess_" + Date.now();
         this.theme = {
-            name: 'ai-Ncards',
+            name: 'cards',
             primary: '#c41e3a',
             bg: '#121212',
             cardBg: '#1e1e1e',
@@ -423,81 +423,54 @@ class App {
     }
 
     async sendRequest(prompt, contextCardId = null) {
-        this.streamingId = contextCardId ? contextCardId : this.addCard(prompt, '...', {});
-        
-        const cardEl = document.querySelector(`.flip-card[data-id="${this.streamingId}"]`);
-        if(cardEl && !contextCardId) setTimeout(() => cardEl.classList.add('flipped'), 100);
+    this.streamingId = contextCardId ? contextCardId : this.addCard(prompt, '...', {});
 
-        let fullPrompt = SYSTEM_PROMPT + "\n\nUser: " + prompt;
-        if (contextCardId) {
-            const oldCard = this.cards.find(c => c.id === contextCardId);
-            if (oldCard) {
-                const styleContext = (oldCard.styles && oldCard.styles.locked) ? `(Note: Original card has locked styles)` : '';
-                fullPrompt = `Previous Request: "${oldCard.q}"\nPrevious Response: "${oldCard.r}" ${styleContext}\n\nUser Instruction: ${prompt}\n\nProvide a continuation or refinement.`;
-            }
-        }
+    const cardEl = document.querySelector(`.flip-card[data-id="${this.streamingId}"]`);
+    if(cardEl && !contextCardId) setTimeout(() => cardEl.classList.add('flipped'), 100);
 
-        this.abortController = new AbortController();
-        const signal = this.abortController.signal;
-
-        try {
-            const url = this.getProxyUrl();
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ sessionId: this.sessionId, prompt: fullPrompt }),
-                signal
-            });
-
-            if (!res.ok) throw new Error(`Proxy Error: ${res.status}`);
-
-            const reader = res.body.getReader();
-            let buffer = '';
-            let accumulated = '';
-            let isFirstChunk = true;
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += this.decoder.decode(value, { stream: true });
-                
-                const lines = buffer.split('\n\n');
-                buffer = lines.pop() || '';
-                for (const line of lines) {
-                    const jsonStr = line.replace('data: ', '').trim();
-                    if (!jsonStr || jsonStr === '[DONE]') continue;
-                    try {
-                        const json = JSON.parse(jsonStr);
-                        const chunk = json.choices?.[0]?.delta?.content;
-                        if (chunk) {
-                            accumulated += chunk;
-                            // Always call updateStreamingContent, it handles the logic
-                            if (isFirstChunk) {
-                                this.updateStreamingContent(accumulated, true);
-                                isFirstChunk = false;
-                            } else {
-                                this.updateStreamingContent(accumulated, false);
-                            }
-                        }
-                    } catch {}
-                }
-            }
-
-            this.finalizeResponse(accumulated);
-
-        } catch (err) {
-            if (err.name === 'AbortError') {
-                const el = document.querySelector(`.flip-card[data-id="${this.streamingId}"] .response-content`);
-                if (el) el.innerHTML += '<div style="color:#ff6b6b; margin-top:10px;">[Stopped]</div>';
-            } else {
-                const el = document.querySelector(`.flip-card[data-id="${this.streamingId}"] .response-content`);
-                if (el) el.innerHTML = `<span style="color: #ff6b6b; font-weight: bold;">Error: ${err.message}</span>`;
-            }
-            this.streamingId = null;
-        } finally {
-            this.abortController = null;
+    let fullPrompt = SYSTEM_PROMPT + "\n\nUser: " + prompt;
+    if (contextCardId) {
+        const oldCard = this.cards.find(c => c.id === contextCardId);
+        if (oldCard) {
+            const styleContext = (oldCard.styles && oldCard.styles.locked) ? `(Note: Original card has locked styles)` : '';
+            fullPrompt = `Previous Request: "${oldCard.q}"\nPrevious Response: "${oldCard.r}" ${styleContext}\n\nUser Instruction: ${prompt}\n\nProvide a continuation or refinement.`;
         }
     }
+
+    this.abortController = new AbortController();
+    const signal = this.abortController.signal;
+
+    try {
+        const url = this.getProxyUrl();
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId: this.sessionId, prompt: fullPrompt }),
+            signal
+        });
+
+        if (!res.ok) throw new Error(`Proxy Error: ${res.status}`);
+
+        // Backend returns plain JSON, not a stream
+        const data = await res.json();
+        const accumulated = data.response || '';
+
+        this.updateStreamingContent(accumulated, true);
+        this.finalizeResponse(accumulated);
+
+    } catch (err) {
+        if (err.name === 'AbortError') {
+            const el = document.querySelector(`.flip-card[data-id="${this.streamingId}"] .response-content`);
+            if (el) el.innerHTML += '<div style="color:#ff6b6b; margin-top:10px;">[Stopped]</div>';
+        } else {
+            const el = document.querySelector(`.flip-card[data-id="${this.streamingId}"] .response-content`);
+            if (el) el.innerHTML = `<span style="color: #ff6b6b; font-weight: bold;">Error: ${err.message}</span>`;
+        }
+        this.streamingId = null;
+    } finally {
+        this.abortController = null;
+    }
+}
 
     stopStream() {
         if (this.abortController) {
