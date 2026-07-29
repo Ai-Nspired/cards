@@ -1,142 +1,56 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ai-ncards</title>
 <link rel="stylesheet" href="style.css">
-<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
 </head>
-<body>
+<body class="view-grid">
 
-<div id="app">
-  <header id="topBar">
-    <div class="t-left">
-      <button class="icon-btn" id="undoBtn" title="Undo"><i class="fas fa-undo"></i></button>
-      <span id="brand">ai-ncards</span>
-    </div>
-    <div class="t-right">
-      <span id="cardCount" class="badge">0</span>
-      <button class="icon-btn" id="menuBtn" title="Menu"><i class="fas fa-sliders-h"></i></button>
-    </div>
-  </header>
-
-  <main id="grid"></main>
-
-  <div class="empty-state" id="emptyState">
-    <div class="empty-icon">♢</div>
-    <h3>No cards yet</h3>
-    <p>Type below to create your first card</p>
-    <div class="empty-hints">
-      <span><i class="fas fa-tap"></i> Tap to flip</span>
-      <span><i class="fas fa-hold"></i> Hold for menu</span>
-      <span><i class="fas fa-magic"></i> AI autocomplete</span>
-    </div>
+<div id="topBar">
+  <div class="t-left"><span id="brand">ai-ncards</span><span class="badge" id="cardCount">0</span></div>
+  <div class="t-right">
+    <button class="icon-btn" id="undoBtn" title="Undo" disabled><i class="fas fa-undo"></i></button>
+    <button class="icon-btn" id="menuBtn" title="Settings"><i class="fas fa-cog"></i></button>
   </div>
-
-  <div id="selectionBar">
-    <div class="sel-left">
-      <button class="icon-btn" id="cancelSel"><i class="fas fa-times"></i></button>
-      <span id="selCount">0</span>
-    </div>
-    <div class="sel-right">
-      <button class="sel-btn" id="splitSel"><i class="fas fa-cut"></i></button>
-      <button class="sel-btn" id="mergeSel"><i class="fas fa-compress-alt"></i></button>
-      <button class="sel-btn danger" id="deleteSel"><i class="fas fa-trash"></i></button>
-    </div>
-  </div>
-
-  <div class="input-area" id="inputArea">
-    <input id="input" type="text" placeholder="Type to create or ask..." autocomplete="off" spellcheck="false">
-    <button id="sendBtn"><i class="fas fa-arrow-up"></i></button>
-  </div>
-
-  <button class="fab view-fab" id="viewFab" title="Cycle view"><i class="fas fa-columns"></i></button>
-
-  <div id="fullscreen" class="overlay">
-    <div class="fs-header">
-      <div class="fs-left">
-        <button class="icon-btn" onclick="app.toggleFsFlip()"><i class="fas fa-sync-alt"></i></button>
-        <button class="icon-btn" onclick="app.toggleNative()"><i class="fas fa-expand"></i></button>
-      </div>
-      <div class="fs-right">
-        <button class="icon-btn" onclick="app.readFs()"><i class="fas fa-volume-up"></i></button>
-        <button class="icon-btn" onclick="app.closeFs()"><i class="fas fa-times"></i></button>
-      </div>
-    </div>
-    <div class="fs-body"><div id="fsContent"></div></div>
-  </div>
-
-  <div id="ctxMenu" class="ctx-menu">
-    <button data-act="continue"><i class="fas fa-redo"></i> Continue</button>
-    <button data-act="magic"><i class="fas fa-wand-magic"></i> Magic</button>
-    <hr>
-    <button data-act="merge"><i class="fas fa-compress-alt"></i> Merge</button>
-    <button data-act="split"><i class="fas fa-cut"></i> Split</button>
-    <button data-act="copy"><i class="fas fa-copy"></i> Copy</button>
-    <hr>
-    <button data-act="style"><i class="fas fa-palette"></i> Style</button>
-    <button data-act="fullscreen"><i class="fas fa-expand"></i> Fullscreen</button>
-    <hr>
-    <button data-act="delete" class="danger"><i class="fas fa-trash"></i> Delete</button>
-  </div>
-
-  <div id="modalProxy" class="overlay">
-    <div class="modal">
-      <div class="modal-h"><h3>Settings</h3><button class="icon-btn" onclick="app.closeModal('modalProxy')"><i class="fas fa-times"></i></button></div>
-      <div class="modal-b">
-        <div class="section">
-          <h4><i class="fas fa-plug"></i> Proxy</h4>
-          <input type="text" id="proxyUrl" placeholder="https://your-worker.workers.dev">
-          <small>Default: https://orproxy.ai-n.workers.dev</small>
-        </div>
-        <div class="section">
-          <h4><i class="fas fa-cloud"></i> Cloud Sync</h4>
-          <div class="btn-group"><button class="tgl" onclick="app.syncFromWorker()"><i class="fas fa-download"></i> Pull</button><button class="tgl" onclick="app.syncToWorker()"><i class="fas fa-upload"></i> Push</button></div>
-        </div>
-        <div class="section">
-          <h4><i class="fas fa-database"></i> Data</h4>
-          <div class="btn-group"><button class="tgl" onclick="app.exportData()"><i class="fas fa-file-export"></i> Export</button><label class="tgl"><i class="fas fa-file-import"></i> Import<input type="file" accept=".json" onchange="app.importData(this)" hidden></label></div>
-          <div class="btn-group"><button class="tgl danger" onclick="app.clearAll()"><i class="fas fa-trash"></i> Clear</button></div>
-        </div>
-        <div class="section">
-          <h4><i class="fas fa-paint-brush"></i> Theme</h4>
-          <div class="btn-group"><button class="tgl" onclick="app.toggleTheme()">Light/Dark</button><button class="tgl" onclick="app.toggleLock()"><i class="fas fa-lock"></i> Lock</button></div>
-        </div>
-        <div class="section">
-          <h4><i class="fas fa-th"></i> View</h4>
-          <div class="btn-group"><button class="tgl" onclick="app.setView('list')">List</button><button class="tgl" onclick="app.setView('grid')">Grid</button><button class="tgl" onclick="app.setView('full')">Full</button></div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div id="modalStyle" class="overlay">
-    <div class="modal">
-      <div class="modal-h"><h3>Card Style</h3><button class="icon-btn" onclick="app.closeModal('modalStyle')"><i class="fas fa-times"></i></button></div>
-      <div class="modal-b">
-        <label class="ck"><input type="checkbox" id="lockStyle"> Lock card style</label>
-        <div class="section"><h4>Text</h4><div class="btn-group"><button class="tgl" data-sp="fontWeight" data-sv="bold">B</button><button class="tgl" data-sp="fontStyle" data-sv="italic">I</button><button class="tgl" data-sp="textDecoration" data-sv="underline">U</button></div></div>
-        <div class="section"><h4>Colors</h4><div class="cp"><label>Text</label><input type="color" id="stColor"></div><div class="cp"><label>Bg</label><input type="color" id="stBg"></div><div class="cp"><label>Border</label><input type="color" id="stBorder"></div></div>
-        <div class="section"><h4>Size</h4><div class="sl"><label>Pad</label><input type="range" id="stPad" min="4" max="32" value="14"><span id="stPadV">14</span></div><div class="sl"><label>Rad</label><input type="range" id="stRad" min="0" max="20" value="12"><span id="stRadV">12</span></div></div>
-      </div>
-      <div class="modal-f"><button class="btn" onclick="app.closeModal('modalStyle')">Cancel</button><button class="btn primary" onclick="app.saveStyle()">Apply</button></div>
-    </div>
-  </div>
-
-  <div id="modalPrompt" class="overlay">
-    <div class="modal">
-      <div class="modal-h"><h3 id="promptTitle">Magic Action</h3><button class="icon-btn" onclick="app.closeModal('modalPrompt')"><i class="fas fa-times"></i></button></div>
-      <div class="modal-b"><p id="promptDesc" class="desc">Tell AI what to do with this card</p><textarea id="promptArea" placeholder="e.g. Make it professional, merge with next..."></textarea></div>
-      <div class="modal-f"><button class="btn" onclick="app.closeModal('modalPrompt')">Cancel</button><button class="btn primary" id="promptGo">Execute</button></div>
-    </div>
-  </div>
-
-  <div id="toast"></div>
 </div>
 
-<script src="script.js"></script>
+<div id="grid"></div>
+
+<div class="empty-state" id="emptyState">
+  <div class="empty-icon">✦</div>
+  <h3>New Document</h3>
+  <p>Ask anything to begin</p>
+  <div class="empty-hints">
+    <span><i class="fas fa-pencil-alt"></i> Write a request</span>
+    <span><i class="fas fa-magic"></i> Use !theme or !action</span>
+    <span><i class="fas fa-ellipsis-h"></i> More via ⋮</span>
+  </div>
+</div>
+
+<div id="selectionBar">
+  <div class="sel-left">
+    <button class="sel-btn danger" id="cancelSel">Cancel</button>
+    <button class="sel-btn danger" id="deleteSel">Delete</button>
+    <button class="sel-btn" id="mergeSel">Merge</button>
+    <span id="selCount"></span>
+  </div>
+  <div class="sel-right">
+    <button class="sel-btn" id="splitSel">Split</button>
+    <button class="sel-btn" id="continueSel">Continue</button>
+  </div>
+</div>
+
+<div class="input-area">
+  <input type="text" id="input" placeholder="Write a request…" autocomplete="off" />
+  <button id="sendBtn"><i class="fas fa-paper-plane"></i></button>
+</div>
+
+<!-- modals container -->
+<div id="modalContainer"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script type="module" src="script.js"></script>
 </body>
 </html>
