@@ -919,59 +919,35 @@ class App {
     }
 
     async requestMergeUpdate(id, prompt) {
-        this.abortController = new AbortController();
-        const signal = this.abortController.signal;
+    this.abortController = new AbortController();
+    const signal = this.abortController.signal;
 
-        try {
-            const url = this.getProxyUrl();
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ sessionId: this.sessionId, prompt: SYSTEM_PROMPT + "\n\nUser: " + prompt }),
-                signal
-            });
-            if (!res.ok) throw new Error("Proxy Error");
-            
-            const reader = res.body.getReader();
-            let buffer = '';
-            let accumulated = '';
-            let isFirstChunk = true;
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += this.decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n\n');
-                buffer = lines.pop() || '';
-                for (const line of lines) {
-                    const jsonStr = line.replace('data: ', '').trim();
-                    if (!jsonStr || jsonStr === '[DONE]') continue;
-                    try {
-                        const json = JSON.parse(jsonStr);
-                        const chunk = json.choices?.[0]?.delta?.content;
-                        if (chunk) {
-                            accumulated += chunk;
-                            if (isFirstChunk) {
-                                this.updateStreamingContent(accumulated, true);
-                                isFirstChunk = false;
-                            } else {
-                                this.updateStreamingContent(accumulated, false);
-                            }
-                        }
-                    } catch {}
-                }
-            }
-            this.finalizeResponse(accumulated);
-        } catch (err) {
-            if (err.name === 'AbortError') {
-                const el = document.querySelector(`.flip-card[data-id="${id}"] .response-content`);
-                if (el) el.innerHTML += '<div style="color:#ff6b6b;">[Merge Stopped]</div>';
-                return;
-            }
+    try {
+        const url = this.getProxyUrl();
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ sessionId: this.sessionId, prompt: SYSTEM_PROMPT + "\n\nUser: " + prompt }),
+            signal
+        });
+        if (!res.ok) throw new Error("Proxy Error");
+
+        const data = await res.json();
+        const accumulated = data.response || '';
+
+        this.updateStreamingContent(accumulated, true);
+        this.finalizeResponse(accumulated);
+    } catch (err) {
+        if (err.name === 'AbortError') {
             const el = document.querySelector(`.flip-card[data-id="${id}"] .response-content`);
-            if (el) el.innerHTML = `<span style="color: #ff6b6b;">Merge Failed: ${err.message}</span>`;
-        } finally {
-            this.abortController = null;
+            if (el) el.innerHTML += '<div style="color:#ff6b6b;">[Merge Stopped]</div>';
+            return;
         }
+        const el = document.querySelector(`.flip-card[data-id="${id}"] .response-content`);
+        if (el) el.innerHTML = `<span style="color: #ff6b6b;">Merge Failed: ${err.message}</span>`;
+    } finally {
+        this.abortController = null;
+       }
     }
 
     applyAITheme() {
@@ -1002,40 +978,27 @@ Do not output any other text.`;
         this.showToast("Generating Theme...");
         
         const url = this.getProxyUrl();
-        fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ prompt: prompt })
-        })
-        .then(res => {
-            const reader = res.body.getReader();
-            let fullText = "";
-            const processChunk = () => {
-                return reader.read().then(({done, value}) => {
-                    if (done) {
-                        const { themeUpdate } = this.parseCommands(fullText);
-                        if (themeUpdate) {
-                            this.theme = { ...this.theme, ...themeUpdate };
-                            this.applyTheme();
-                            this.saveState();
-                            this.showToast(`Theme: ${themeUpdate.name}`);
-                        } else {
-                            this.showToast("Theme generation failed (parse error)");
-                        }
-                        return;
-                    }
-                    const text = this.decoder.decode(value, { stream: true });
-                    fullText += text;
-                    return processChunk();
-                });
-            };
-            return processChunk();
-        })
-        .catch(e => {
-            this.showToast("Theme generation failed");
-        });
+fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt: prompt })
+})
+.then(res => res.json())
+.then(data => {
+    const fullText = data.response || '';
+    const { themeUpdate } = this.parseCommands(fullText);
+    if (themeUpdate) {
+        this.theme = { ...this.theme, ...themeUpdate };
+        this.applyTheme();
+        this.saveState();
+        this.showToast(`Theme: ${themeUpdate.name}`);
+    } else {
+        this.showToast("Theme generation failed (parse error)");
     }
-
+})
+.catch(e => {
+    this.showToast("Theme generation failed");
+});
     toggleSelect(id, e) {
         if (e && e.stopPropagation) e.stopPropagation();
         const el = document.querySelector(`.flip-card[data-id="${id}"]`);
