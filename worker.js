@@ -1,4 +1,4 @@
-// ai-ncards — simplified MVP
+// cards — simplified MVP
 // Direct OpenRouter calls (no proxy) + KV caching for exact-match prompts
 
 const CSS = `
@@ -97,7 +97,7 @@ const qsa = s => [...document.querySelectorAll(s)];
 class App {
  constructor(){
   this.cards=[];this.hist=[];this.sel=new Set();this.ctxId=null;this.fsId=null;this.stId=null;this.pCtx=null;
-  this.theme={name:'ai-ncards',primary:'#c41e3a',bg:'#0d0d0d',cardBg:'#1a1a2e',text:'#e8e8e8',border:'#2a2a3e',locked:false};
+  this.theme={name:'cards',primary:'#c41e3a',bg:'#0d0d0d',cardBg:'#1a1a2e',text:'#e8e8e8',border:'#2a2a3e',locked:false};
   this.settings={view:'list'};
   this.load();this.applyTheme();this.applyView();this.bind();this.render();
  }
@@ -252,7 +252,7 @@ const HTML = `<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
-<title>ai-ncards</title>
+<title>cards</title>
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
@@ -346,8 +346,8 @@ async function handleChat(request, env) {
 
     // KV cache: exact-match lookup
     const cacheKey = await hashKey(fullPrompt);
-    if (env.kv) {
-      const cached = await env.kv.get(cacheKey);
+    if (env.KV) {
+      const cached = await env.KV.get(cacheKey);
       if (cached) {
         return new Response(JSON.stringify({ response: cached, cached: true }), {
           headers: { "Content-Type": "application/json" },
@@ -362,7 +362,7 @@ async function handleChat(request, env) {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
         "HTTP-Referer": "https://ai-n.workers.dev",
-        "X-Title": "ai-ncards",
+        "X-Title": "cards",
       },
       body: JSON.stringify({
         model: "openai/gpt-4o-mini",
@@ -386,7 +386,7 @@ async function handleChat(request, env) {
     const responseText = orData.choices?.[0]?.message?.content || "(no response)";
 
     // Cache in KV (TTL: 1 hour)
-    if (env.kv) {
+    if (env.KV) {
       await env.kv.put(cacheKey, responseText, { expirationTtl: 3600 });
     }
 
