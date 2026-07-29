@@ -7,13 +7,12 @@
   "assets": {
     "directory": "./public",
     "binding": "ASSETS",
-    "run_worker_first": ["/chat"]
+    "run_worker_first": ["/chat", "/chat/*"]
   },
-  // Add this to your wrangler.jsonc
   "kv_namespaces": [
     {
       "binding": "KV",
-      "id": "4a9bfbffb4d440cba86badc508e2045a",
+      "id": "4a9bfbffb4d440cba86badc508e2045a"
     }
   ],
   "routes": [
