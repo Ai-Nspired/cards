@@ -1,6 +1,6 @@
 // script.js
 (() => {
-  const MSG = `You are ai-ncards, a card-based document builder.
+  const MSG = `You are cards, a card-based document builder.
 - Style with !theme:Name,Bg,CardBg,Text,Border,Primary!
 - Edit request: "New Request: [text]" / response: "New Response: [text]"
 - Actions: !action:merge !action:clear !action:view:grid
@@ -15,10 +15,10 @@ User speaks naturally. Build the doc.`;
     cards: [], hist: [], sid: null, uid: 'u_' + Math.random().toString(36).slice(2, 9),
     sel: new Set(), ctxId: null, fsId: null, fsFlip: false, stId: null, pCtx: null, ab: null,
     dec: new TextDecoder(), settings: { view: 'grid', proxyUrl: '' },
-    theme: { name: 'ai-ncards', primary: '#c41e3a', bg: '#0d0d0d', cardBg: '#1a1a2e', text: '#e8e8e8', border: '#2a2a3e', locked: false },
+    theme: { name: 'cards', primary: '#c41e3a', bg: '#0d0d0d', cardBg: '#1a1a2e', text: '#e8e8e8', border: '#2a2a3e', locked: false },
 
-    save() { try { ls('ai_ncards', JSON.stringify({ cards: this.cards, theme: this.theme, settings: this.settings, sessionId: this.sid, userId: this.uid })); } catch {} },
-    load() { try { const d = JSON.parse(ls('ai_ncards')); if (!d) return; this.cards = d.cards || []; this.theme = { ...this.theme, ...d.theme }; this.settings = { ...this.settings, ...d.settings }; this.sid = d.sessionId || null; this.uid = d.userId || this.uid; } catch {} },
+    save() { try { ls('cards', JSON.stringify({ cards: this.cards, theme: this.theme, settings: this.settings, sessionId: this.sid, userId: this.uid })); } catch {} },
+    load() { try { const d = JSON.parse(ls('cards')); if (!d) return; this.cards = d.cards || []; this.theme = { ...this.theme, ...d.theme }; this.settings = { ...this.settings, ...d.settings }; this.sid = d.sessionId || null; this.uid = d.userId || this.uid; } catch {} },
     applyTheme() { Object.entries(this.theme).forEach(([k, v]) => document.documentElement.style.setProperty(`--${k === 'primary' ? 'p' : k}`, v)); },
     applyView() { document.body.className = 'view-' + this.settings.view; },
     toggleTheme() { this.theme.bg = this.theme.bg === '#0d0d0d' ? '#f5f5f5' : '#0d0d0d'; this.theme.cardBg = this.theme.bg === '#f5f5f5' ? '#ffffff' : '#1a1a2e'; this.theme.text = this.theme.bg === '#f5f5f5' ? '#222' : '#e8e8e8'; this.applyTheme(); this.save(); },
