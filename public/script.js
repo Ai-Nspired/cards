@@ -1,654 +1,271 @@
-const DEFAULT_PROXY_URL = "https://ai.nspired.cc/chat";
-const STORAGE_KEY = "ai_ndraft_data_v2";
-
-const SYSTEM_PROMPT = `You are a helpful, casual AI assistant. You can control styling and app behavior.
-
-1. VISUAL STYLING (Start of response):
-   - Page Theme: !theme:Name,BgHex,CardBgHex,TextHex,BorderHex,PrimaryHex!
-   - Card Style: !bg:#hex! !text:#hex! !border:#hex! !pad:px! !radius:px! !bold! !italic!
-
-2. APP ACTIONS (Hidden commands, put at end):
-   - !action:merge! (Merges current selection)
-   - !action:clear! (Clears the entire board)
-   - !action:view:grid! or !action:view:list! or !action:view:full! (Changes view)
-
-User requests are natural language. Be efficient.`;
-
 class App {
-    constructor() {
-        this.cards = [];
-        this.history = []; 
-        this.sessionId = "sess_" + Date.now();
-        this.theme = {
-            name: 'cards',
-            primary: '#c41e3a',
-            bg: '#121212',
-            cardBg: '#1e1e1e',
-            text: '#f5f5f5',
-            border: '#333',
-            locked: false
-        };
-        this.settings = {
-            view: 'list',
-            autoTTS: false,
-            asrEnabled: false,
-            proxyUrl: '',
-            streamEnabled: false
-        };
+  constructor() {
+    this.stateKey = 'kards_state_v1';
+    this.settings = this.loadSettings();
+    this.sessionId = this.generateSessionId();
+    this.isStreaming = false;
+    this.abortController = null;
+    this.debugLogs = [];
+    this.cardIndex = 0;
+  }
 
-        this.streamingId = null;
-        this.selectedIds = new Set();
-        this.contextMenuTargetId = null;
-        this.fullscreenId = null;
-        this.fsFlipped = false;
-        this.editingId = null; 
-        this.editingField = null;
-        this.stylingId = null; 
-        this.promptContext = null; 
+  generateSessionId() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
 
-        this.recognizer = null;
-        this.isListening = false;
+  loadSettings() {
+    try {
+      const raw = localStorage.getItem(this.stateKey);
+      if (raw) return JSON.parse(raw);
+    } catch(e) {}
+    return {
+      view: 'list',
+      autoTTS: false,
+      asrEnabled: false,
+      proxyUrl: '',
+      streamEnabled: false
+    };
+  }
 
-        this.decoder = new TextDecoder();
-        this.abortController = null;
+  saveSettings() {
+    try {
+      localStorage.setItem(this.stateKey, JSON.stringify(this.settings));
+    } catch(e) {}
+  }
+
+  getProxyUrl() {
+    return this.settings.proxyUrl || "https://ai.nspired.cc/chat";
+  }
+
+  async handleSendClick() {
+    if (this.isStreaming && this.abortController) {
+      this.abortController.abort();
+      this.showToast('Request cancelled');
+      return;
     }
-
-    async init() {
-        this.loadState();
-        this.applyTheme();
-        this.applyView();
-        this.bindEvents();
-        this.initASR();
-        this.renderAll();
-        this.updateToggles();
-        
-        const proxyInput = document.getElementById('proxyUrlInput');
-        if (proxyInput && this.settings.proxyUrl) proxyInput.value = this.settings.proxyUrl;
-
-        document.getElementById('stylePadding').addEventListener('input', (e) => document.getElementById('valPad').textContent = e.target.value + 'px');
-        document.getElementById('styleRadius').addEventListener('input', (e) => document.getElementById('valRad').textContent = e.target.value + 'px');
-        document.getElementById('styleWidth').addEventListener('input', (e) => document.getElementById('valWid').textContent = e.target.value + 'px');
+    const input = document.getElementById('userInput');
+    const proxyInput = document.getElementById('proxyInput');
+    if (proxyInput && proxyInput.value) {
+      this.settings.proxyUrl = proxyInput.value.trim();
+      this.saveSettings();
     }
+    const prompt = input.value.trim();
+    if (!prompt) return;
+    this.addCard('user', prompt);
+    input.value = '';
+    this.debugLogs = [];
+    this.renderDebug();
+    await this.streamFetchCompletion(prompt, this.addCard.bind(this));
+  }
 
-    getProxyUrl() {
-        const inputVal = document.getElementById('proxyUrlInput')?.value.trim();
-        if (inputVal) {
-            this.settings.proxyUrl = inputVal;
-            this.saveState();
-            return inputVal;
-        }
-        return this.settings.proxyUrl || DEFAULT_PROXY_URL;
-    }
+  getStoredInferences() {
+    try { return JSON.parse(localStorage.getItem('kards_inferences') || '[]'); } catch { return []; }
+  }
 
-    bindEvents() {
-        const sendBtn = document.getElementById('sendBtn');
-        sendBtn.addEventListener('click', () => this.handleSendClick());
-        
-        const input = document.getElementById('userInput');
-        input.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                this.handleSendClick();
+  addInference(item) {
+    const list = this.getStoredInferences();
+    list.unshift(item);
+    if (list.length > 50) list.length = 50;
+    try { localStorage.setItem('kards_inferences', JSON.stringify(list)); } catch(e) {}
+    this.renderInferenceList();
+  }
+
+  streamFetchCompletion(prompt, onToken) {
+    this.isStreaming = this.settings.streamEnabled;
+    this.abortController = new AbortController();
+    const url = this.getProxyUrl();
+    const body = JSON.stringify({ prompt, cards: [] });
+
+    this.debugLog(`POST ${url}`);
+    this.debugLog('body:', body);
+
+    const headers = { 'Content-Type': 'application/json' };
+
+    const doFetch = async (signal) => {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers,
+        body,
+        signal: signal || undefined
+      });
+      this.debugLog('status:', res.status);
+      this.debugLog('headers:', Object.fromEntries(res.headers.entries()));
+
+      const ctype = res.headers.get('content-type') || '';
+      let rawText = '';
+
+      if (ctype.includes('text/event-stream')) {
+        this.debugLog('streaming SSE');
+        onToken?.('');
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            if (line.startsWith('event: done')) { this.debugLog('SSE done'); return; }
+            if (line.startsWith('data: ')) {
+              const data = line.slice(6).trim();
+              if (data === '[DONE]') continue;
+              try {
+                const json = JSON.parse(data);
+                const text = json.response || json.text || JSON.stringify(json);
+                this.debugLog('chunk:', text.substring(0, 80));
+                onToken?.(text);
+              } catch(e) {
+                // If it's not JSON, treat as plain text chunk
+                this.debugLog('text chunk:', data.substring(0, 80));
+                onToken?.(data);
+              }
             }
-        });
-
-        document.getElementById('menuFab').addEventListener('click', () => this.openModal('settingsModal'));
-        document.getElementById('viewFab').addEventListener('click', () => this.cycleView());
-        document.getElementById('undoFabTop').addEventListener('click', () => this.undo());
-
-        document.getElementById('cancelSelect').addEventListener('click', () => this.clearSelection());
-        document.getElementById('mergeSelected').addEventListener('click', () => this.promptAction('merge'));
-        document.getElementById('deleteSelected').addEventListener('click', () => this.bulkDelete());
-        document.getElementById('splitSelected').addEventListener('click', () => this.promptAction('split'));
-
-        document.getElementById('cardMenu').addEventListener('click', (e) => {
-            const btn = e.target.closest('.menu-item');
-            if (btn && this.contextMenuTargetId) {
-                const action = btn.dataset.action;
-                if (action === 'undo') {
-                    this.undo();
-                } else {
-                    this.handleCardAction(action, this.contextMenuTargetId);
-                }
-                this.closeCardMenu();
-            }
-        });
-
-        document.querySelectorAll('.modal-overlay').forEach(overlay => {
-            overlay.addEventListener('click', (e) => {
-                if (e.target === overlay) {
-                    const id = overlay.id;
-                    this.closeModal(id);
-                }
-            });
-        });
-
-        document.getElementById('promptConfirmBtn').addEventListener('click', () => this.executePromptAction());
-
-        document.addEventListener('click', (e) => {
-            if (!e.target.closest('#cardMenu') && !e.target.closest('.card-actions') && !e.target.closest('.flip-card')) {
-                this.closeCardMenu();
-            }
-        });
-    }
-
-    saveState() {
-        const data = {
-            cards: this.cards,
-            theme: this.theme,
-            settings: this.settings,
-            sessionId: this.sessionId
-        };
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    }
-
-    loadState() {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (raw) {
-            try {
-                const data = JSON.parse(raw);
-                this.cards = data.cards || [];
-                this.theme = { ...this.theme, ...data.theme };
-                this.settings = { ...this.settings, ...data.settings };
-                this.sessionId = data.sessionId || this.sessionId;
-            } catch (e) {
-                console.error("Load failed", e);
-            }
+          }
         }
-    }
-
-    pushHistory(actionType) {
-        if (this.history.length > 10) this.history.shift();
-        this.history.push({
-            cards: JSON.parse(JSON.stringify(this.cards)),
-            theme: { ...this.theme },
-            timestamp: Date.now(),
-            action: actionType
-        });
-        this.showToast(`Saved: ${actionType}`);
-    }
-
-    undo() {
-        if (this.history.length === 0) {
-            this.showToast("Nothing to undo");
-            return;
-        }
-        const lastState = this.history.pop();
-        this.cards = lastState.cards;
-        if (!this.theme.locked) this.theme = lastState.theme;
-        
-        this.saveState();
-        this.renderAll();
-        this.applyTheme();
-        this.showToast("Undid: " + lastState.action);
-    }
-
-    exportData() {
-        const data = {
-            cards: this.cards,
-            theme: this.theme,
-            settings: this.settings,
-            sessionId: this.sessionId
-        };
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `ai_ncards_export_${Date.now()}.json`;
-        a.click();
-        this.showToast("Export downloaded");
-    }
-
-    importData(input) {
-        const file = input.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            try {
-                const data = JSON.parse(e.target.result);
-                this.pushHistory("Pre-Import Backup");
-                this.cards = data.cards || [];
-                this.theme = data.theme || this.theme;
-                this.settings = data.settings || this.settings;
-                this.sessionId = data.sessionId || this.sessionId;
-                
-                this.renderAll();
-                this.applyTheme();
-                this.applyView();
-                this.saveState();
-                this.showToast("Import Successful");
-                this.closeModal('settingsModal');
-            } catch (err) {
-                this.showToast("Import failed");
-            }
-            input.value = '';
-        };
-        reader.readAsText(file);
-    }
-
-    renderAll() {
-        this.renderCards();
-        this.renderSelectionToolbar();
-        this.updateToggles();
-        this.updateStyleControls();
-    }
-
-    renderCards() {
-        const container = document.getElementById('cardContainer');
-        container.innerHTML = '';
-        this.cards.forEach((card, index) => {
-            const el = this.createCardElement(card, index);
-            container.appendChild(el);
-        });
-    }
-
-    createCardElement(card, index) {
-        const div = document.createElement('div');
-        div.className = 'card' + (this.fullscreenId === index ? ' fullscreen' : '') + (this.selectedIds.has(index) ? ' selected' : '');
-        div.dataset.index = index;
-        
-        const q = card.q || '';
-        const a = card.a || '';
-        
-        div.innerHTML = `
-            <div class="card-inner">
-                <div class="card-face card-front">
-                    <div class="card-header">
-                        <span class="card-index">#${index + 1}</span>
-                        <div class="card-actions">
-                            <button class="btn-icon" data-action="favorite">★</button>
-                            <button class="btn-icon" data-action="duplicate">↕</button>
-                            <button class="btn-icon" data-action="delete">×</button>
-                        </div>
-                    </div>
-                    <div class="card-content">
-                        <div class="card-field-label">Question</div>
-                        <div class="card-field" contenteditable="true" data-field="q">${this.escapeHTML(q)}</div>
-                    </div>
-                    <div class="card-content">
-                        <div class="card-field-label">Answer</div>
-                        <div class="card-field ${a ? '' : 'empty'}" contenteditable="true" data-field="a">${a ? this.escapeHTML(a) : 'Click to add answer...'}</div>
-                    </div>
-                </div>
-                <div class="card-face card-back">
-                    <div class="card-header">
-                        <span class="card-index">#${index + 1}</span>
-                        <div class="card-actions">
-                            <button class="btn-icon" data-action="favorite">★</button>
-                            <button class="btn-icon" data-action="duplicate">↕</button>
-                            <button class="btn-icon" data-action="delete">×</button>
-                        </div>
-                    </div>
-                    <div class="card-content">
-                        <div class="card-field-label">Answer</div>
-                        <div class="card-field" contenteditable="true" data-field="a">${this.escapeHTML(a)}</div>
-                    </div>
-                    <div class="card-content">
-                        <div class="card-field-label">Question</div>
-                        <div class="card-field ${q ? '' : 'empty'}" contenteditable="true" data-field="q">${q ? this.escapeHTML(q) : 'Click to add question...'}</div>
-                    </div>
-                </div>
-            </div>
-        `;
-
-        // Bind inner field events
-        const fields = div.querySelectorAll('.card-field');
-        fields.forEach(f => {
-            f.addEventListener('input', (e) => {
-                const newVal = e.target.textContent;
-                const otherField = f.dataset.field === 'q' 
-                    ? div.querySelector('.card-back .card-field[data-field="q"]')
-                    : div.querySelector('.card-front .card-field[data-field="a"]');
-                // Update other face preview if not empty
-                if (otherField) otherField.textContent = newVal || (f.dataset.field === 'q' ? 'Click to add question...' : 'Click to add answer...');
-                card[f.dataset.field] = newVal;
-            });
-            f.addEventListener('focus', () => {
-                this.editingId = index;
-                this.editingField = f.dataset.field;
-                this.stylingId = index;
-            });
-        });
-
-        // Card actions (inner)
-        const actionButtons = div.querySelectorAll('.btn-icon');
-        actionButtons.forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const action = btn.dataset.action;
-                if (action === 'delete') {
-                    this.deleteCard(index);
-                } else if (action === 'duplicate') {
-                    this.duplicateCard(index);
-                }
-            });
-        });
-
-        // Flip card on click
-        div.addEventListener('click', (e) => {
-            // If clicking on controls, don't flip
-            if (e.target.closest('.card-actions') || e.target.closest('.btn-icon') || e.target.isContentEditable) return;
-            this.flipCard(index);
-        });
-
-        return div;
-    }
-
-    renderSelectionToolbar() {
-        const toolbar = document.getElementById('selectionToolbar');
-        const count = this.selectedIds.size;
-        if (count === 0) {
-            toolbar.classList.remove('visible');
-            return;
-        }
-        toolbar.classList.add('visible');
-        document.getElementById('selCount').textContent = count + ' selected';
-    }
-
-    updateToggles() {
-        document.getElementById('toggleStream').checked = this.settings.streamEnabled;
-    }
-
-    updateStyleControls() {
-        document.getElementById('stylePadding').value = this.styleVal('pad', 8);
-        document.getElementById('valPad').textContent = this.styleVal('pad', 8) + 'px';
-        document.getElementById('styleRadius').value = this.styleVal('radius', 12);
-        document.getElementById('valRad').textContent = this.styleVal('radius', 12) + 'px';
-        document.getElementById('styleWidth').value = this.styleVal('width', 2);
-        document.getElementById('valWid').textContent = this.styleVal('width', 2) + 'px';
-    }
-
-    styleVal(key, def) {
-        return this.theme[key] !== undefined ? this.theme[key] : def;
-    }
-
-    handleSendClick() {
-        const input = document.getElementById('userInput');
-        const prompt = input.value.trim();
-        if (!prompt) return;
-        input.value = '';
-        this.addUserCard(prompt);
-        this.processWithAgent(prompt);
-    }
-
-    addUserCard(text) {
-        this.cards.push({ q: text, a: '' });
-        this.renderAll();
-        this.saveState();
-    }
-
-    showToast(message, type = 'info') {
-        let toast = document.getElementById('liveToast');
-        if (!toast) {
-            toast = document.createElement('div');
-            toast.id = 'liveToast';
-            document.body.appendChild(toast);
-        }
-        toast.textContent = message;
-        toast.className = 'toast show ' + type;
-        setTimeout(() => { toast.className = 'toast'; }, 3000);
-    }
-
-    // --- Core Agent Processing ---
-    async processWithAgent(prompt) {
-        const cardsState = JSON.stringify(this.cards.map(c => ({ q: c.q, r: c.a })));
-        const body = {
-            prompt: prompt,
-            cards: this.cards
-        };
-
-        const url = this.getProxyUrl();
-        const headers = { 'Content-Type': 'application/json' };
-
-        // Show thinking state
-        this.showToast('Thinking...', 'info');
-
+      } else {
+        // Fallback: parse as JSON
         try {
-            if (this.settings.streamEnabled) {
-                await this.streamFetchCompletion(url, headers, body, (token) => {
-                    const latest = this.cards[this.cards.length - 1];
-                    if (latest) {
-                        latest.a = (latest.a || '') + token;
-                        this.renderAll();
-                    }
-                });
-            } else {
-                const response = await this.fetchWithTimeout(url, { method: 'POST', headers, body });
-                const data = await response.json();
-                const answer = data.response || 'No response';
-                this.cards.push({ q: prompt, a: answer });
-                this.renderAll();
-                this.saveState();
-                this.showToast('Response complete');
-            }
-        } catch (error) {
-            console.error('Agent error:', error);
-            this.showToast('Error: ' + error.message, 'error');
+          rawText = await res.text();
+          this.debugLog('raw response:', rawText.substring(0, 200));
+          const json = JSON.parse(rawText);
+          const text = json.response || json.text || JSON.stringify(json);
+          onToken?.(text);
+          this.debugLog('parsed OK');
+        } catch (e) {
+          // Last resort: show raw text as fallback
+          this.debugLog('parse failed, showing raw:', rawText.substring(0, 400));
+          onToken?.(rawText || 'No response content');
         }
+      }
+    };
+
+    doFetch(this.abortController.signal).catch(err => {
+      if (err.name === 'AbortError') {
+        this.debugLog('fetch aborted');
+        this.showToast('Request cancelled');
+        return;
+      }
+      this.debugLog('error:', err.message || String(err));
+      this.showToast('Request failed: ' + (err.message || 'unknown'));
+    }).finally(() => {
+      this.isStreaming = false;
+      this.abortController = null;
+    });
+  }
+
+  addCard(type, content) {
+    const container = document.getElementById('cardContainer');
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.dataset.index = ++this.cardIndex;
+    const role = type === 'user' ? 'You' : 'AI';
+    card.innerHTML = `<div class="card-header"><span class="role-badge">${role}</span></div><div class="card-content markdown">${this.renderContent(content)}</div>`;
+    container.appendChild(card);
+    container.scrollTop = container.scrollHeight;
+    this.renderAll();
+    this.saveStateDebounced();
+  }
+
+  renderContent(content) {
+    // Render markdown image and links
+    return content
+      .replace(/!\[(.*?)\]\((.*?)\)/g, '<img src="$2" alt="$1" style="max-width:100%;border-radius:8px;"/>')
+      .replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+      .replace(/\n/g, '<br/>');
+  }
+
+  // --- UI rendering (simplified) ---
+  renderAll() {
+    // theme applied if available
+    if (typeof this.applyTheme === 'function') this.applyTheme();
+    if (typeof this.applyView === 'function') this.applyView();
+  }
+
+  showToast(message, type = 'info') {
+    let container = document.getElementById('toastContainer');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'toastContainer';
+      document.body.appendChild(container);
     }
+    const toast = document.createElement('div');
+    toast.className = `toast show ${type}`;
+    toast.textContent = message || 'Done';
+    container.appendChild(toast);
+    setTimeout(() => toast.classList.remove('show'), 3000);
+    setTimeout(() => container.removeChild(toast), 3500);
+  }
 
-    async streamFetchCompletion(url, headers, body, onToken) {
-        const fullBody = JSON.stringify(body);
-        const controller = new AbortController();
-        this.abortController = controller;
+  // --- Debug UI ---
+  debugLog(...args) {
+    this.debugLogs.push(args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+    if (this.debugLogs.length > 50) this.debugLogs = this.debugLogs.slice(-50);
+  }
 
-        const res = await fetch(url, {
-            method: 'POST',
-            headers: { ...headers, 'Content-Type': 'application/json' },
-            body: fullBody,
-            signal: controller.signal
-        });
-
-        if (!res.ok) {
-            const text = await res.text();
-            throw new Error('HTTP ' + res.status + ': ' + text);
-        }
-
-        const ct = res.headers.get('Content-Type');
-        if (ct && ct.includes('text/event-stream')) {
-            const reader = res.body.getReader();
-            let buffer = '';
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                buffer += this.decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop();
-                for (const line of lines) {
-                    const trimmed = line.trim();
-                    if (!trimmed) continue;
-                    if (trimmed === '[DONE]') continue;
-                    if (trimmed.startsWith('data: ')) {
-                        const raw = trimmed.slice(6).trim();
-                        try {
-                            const obj = JSON.parse(raw);
-                            if (obj.response) onToken(obj.response);
-                        } catch (e) {
-                            // ignore malformed lines
-                        }
-                    }
-                }
-            }
-            if (buffer) {
-                try {
-                    const obj = JSON.parse(buffer.trim());
-                    if (obj.response) onToken(obj.response);
-                } catch (e) {}
-            }
-        } else {
-            // Fallback: assume JSON
-            const text = await res.text();
-            try {
-                const obj = JSON.parse(text);
-                onToken(obj.response || text);
-            } catch {
-                onToken(text);
-            }
-        }
+  renderDebug() {
+    let panel = document.getElementById('debugPanel');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'debugPanel';
+      panel.style.cssText = 'position:fixed;right:12px;bottom:12px;width:340px;max-height:50vh;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:8px;padding:10px;font:12px/1.4 monospace;overflow:auto;z-index:9999;box-shadow:0 8px 32px rgba(0,0,0,.4)'
+      const header = document.createElement('div');
+      header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:6px';
+      const title = document.createElement('strong');
+      title.textContent = '[Kards Debug]';
+      title.style.cssText = 'color:#58a6ff';
+      const closeBtn = document.createElement('button');
+      closeBtn.textContent = '×';
+      closeBtn.style.cssText = 'background:none;border:1px solid #30363d;color:#c9d1d9;border-radius:4px;padding:0 6px;cursor:pointer;font-weight:700';
+      closeBtn.onclick = () => panel.style.display = 'none';
+      header.appendChild(title);
+      header.appendChild(closeBtn);
+      const list = document.createElement('div');
+      list.id = 'debugList';
+      list.style.cssText = 'white-space:pre-wrap;font-size:11px';
+      panel.appendChild(header);
+      panel.appendChild(list);
+      document.body.appendChild(panel);
     }
-
-    async fetchWithTimeout(url, options, timeout = 120000) {
-        const controller = new AbortController();
-        const id = setTimeout(() => controller.abort(), timeout);
-        try {
-            const res = await fetch(url, { ...options, signal: controller.signal });
-            clearTimeout(id);
-            return res;
-        } catch (err) {
-            clearTimeout(id);
-            throw err;
-        }
-    }
-
-    // --- Card Operations ---
-    deleteCard(index) {
-        this.cards.splice(index, 1);
-        this.renderAll();
-        this.saveState();
-    }
-
-    duplicateCard(index) {
-        const original = this.cards[index];
-        this.cards.push({ q: original.q, a: original.a });
-        this.renderAll();
-        this.saveState();
-    }
-
-    flipCard(index) {
-        this.cards[index].flipped = !this.cards[index].flipped;
-        this.renderAll();
-        this.saveState();
-    }
-
-    bulkDelete() {
-        if (this.selectedIds.size === 0) return;
-        const ordered = [...this.selectedIds].sort((a, b) => b - a);
-        ordered.forEach(i => this.cards.splice(i, 1));
-        this.clearSelection();
-        this.renderAll();
-        this.saveState();
-    }
-
-    // --- Selection ---
-    toggleSelection(index) {
-        if (this.selectedIds.has(index)) {
-            this.selectedIds.delete(index);
-        } else {
-            this.selectedIds.add(index);
-        }
-        this.renderSelectionToolbar();
-        this.renderAll();
-    }
-
-    clearSelection() {
-        this.selectedIds.clear();
-        this.renderSelectionToolbar();
-        this.renderAll();
-    }
-
-    // --- Prompt Action ---
-    executePromptAction() {
-        const action = document.getElementById('promptAction').value;
-        const promptInput = document.getElementById('userInput');
-        const prompt = promptInput.value.trim();
-        if (!prompt) return;
-        promptInput.value = '';
-        this.addUserCard(prompt);
-        if (action === 'merge' && this.cards.length > 1) {
-            const last = this.cards[this.cards.length - 1];
-            const allQ = this.cards.map(c => c.q).join('\n');
-            last.q = allQ;
-        }
-        this.processWithAgent(prompt);
-    }
-
-    // --- Undo/History ---
-    undo() {
-        if (this.history.length === 0) {
-            this.showToast("Nothing to undo");
-            return;
-        }
-        const lastState = this.history.pop();
-        this.cards = lastState.cards;
-        if (!this.theme.locked) this.theme = lastState.theme;
-        this.saveState();
-        this.renderAll();
-        this.applyTheme();
-        this.showToast("Undid: " + lastState.action);
-    }
-
-    // --- Export/Import ---
-    exportData() {
-        const data = {
-            cards: this.cards,
-            theme: this.theme,
-            settings: this.settings,
-            sessionId: this.sessionId
-        };
-        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `ai_ncards_export_${Date.now()}.json`;
-        a.click();
-        this.showToast("Export downloaded");
-    }
-
-    importData(input) {
-        const file = input.files[0];
-        if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            try {
-                const data = JSON.parse(e.target.result);
-                this.pushHistory("Pre-Import Backup");
-                this.cards = data.cards || [];
-                this.theme = data.theme || this.theme;
-                this.settings = data.settings || this.settings;
-                this.sessionId = data.sessionId || this.sessionId;
-                this.renderAll();
-                this.applyTheme();
-                this.applyView();
-                this.saveState();
-                this.showToast("Import Successful");
-                this.closeModal('settingsModal');
-            } catch (err) {
-                this.showToast("Import failed");
-            }
-            input.value = '';
-        };
-        reader.readAsText(file);
-    }
-
-    // --- Filter & Search ---
-    handleFilter() {
-        const term = document.getElementById('filterInput').value.toLowerCase();
-        const cards = document.querySelectorAll('#cardContainer .card');
-        cards.forEach(card => {
-            const text = card.textContent.toLowerCase();
-            card.style.display = text.includes(term) ? '' : 'none';
-        });
-    }
-
-    // --- Keyboard ---
-    handleKeyDown(e) {
-        if (e.key === 'Escape') {
-            this.clearSelection();
-            this.closeAllModals();
-        }
-        if (e.key === 'Delete' && this.selectedIds.size > 0) {
-            const ordered = [...this.selectedIds].sort((a, b) => b - a);
-            ordered.forEach(i => this.cards.splice(i, 1));
-            this.clearSelection();
-            this.renderAll();
-            this.saveState();
-        }
-    }
+    const list = document.getElementById('debugList');
+    list.textContent = this.debugLogs.slice(-200).join('\n');
+    panel.style.display = '';
+  }
 }
 
+// Instantiate and mount
 const app = new App();
-app.init();
-
-// Global bindings for inline onclick
 window.kardsApp = app;
-window.showToast = (msg, type) => app.showToast(msg, type);
+
+// Expose a few helpers for manual debugging in console
+window.kardsAppDebug = {
+  openDebug: () => document.getElementById('debugPanel')?.click && document.getElementById('debugPanel').style.display = '',
+  lastResponse: () => console.log('Last logs:', app.debugLogs.slice(-5)),
+  rerender: () => app.renderAll()
+};
+
+// Initialize saved settings into UI
+(function initUI() {
+  const proxyInput = document.getElementById('proxyInput');
+  if (proxyInput && app.settings.proxyUrl) proxyInput.value = app.settings.proxyUrl;
+  document.getElementById('toggleStream') && (document.getElementById('toggleStream').checked = app.settings.streamEnabled);
+})();
+
+// Theme persistence helpers (no-op if not defined)
+window.applyTheme = () => {};
+window.applyView = () => {};
+
+// Make sure init doesn't throw on missing methods
+if (typeof app.init === 'function') {
+  app.init().catch(e => console.error(e));
+} else {
+  app.renderAll();
+}
+
+// Expose init for external callers
+window.kardsAppInit = () => app.init ? app.init() : Promise.resolve();
