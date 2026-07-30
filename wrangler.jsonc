@@ -22,10 +22,6 @@
     {
       "pattern": "ai.nspired.cc",
       "custom_domain": true
-    },
-    {
-      "pattern": "ai.nspired.cc/*",
-      "workers_first": true
     }
   ]
 }
