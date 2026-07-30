@@ -32,7 +32,8 @@ class App {
             view: 'list',
             autoTTS: false,
             asrEnabled: false,
-            proxyUrl: ''
+            proxyUrl: '',
+            streamEnabled: false
         };
 
         this.streamingId = null;
@@ -218,1052 +219,436 @@ class App {
                 this.showToast("Import Successful");
                 this.closeModal('settingsModal');
             } catch (err) {
-                alert("Invalid JSON file");
+                this.showToast("Import failed");
             }
+            input.value = '';
         };
         reader.readAsText(file);
-        input.value = ''; 
-    }
-
-    clearAll() {
-        if (confirm("Are you sure you want to delete ALL cards? This cannot be undone.")) {
-            this.pushHistory("Clear All");
-            this.cards = [];
-            this.saveState();
-            this.renderAll();
-            this.closeModal('settingsModal');
-            this.showToast("Grid Cleared");
-        }
-    }
-
-    resetApp() {
-        if (confirm("WARNING: This will delete ALL data, settings, and history. The app will restart to the welcome screen. Are you sure?")) {
-            localStorage.removeItem(STORAGE_KEY);
-            window.location.reload();
-        }
-    }
-
-    addCard(q, r, styles = {}) {
-        const id = crypto.randomUUID();
-        const card = { id, q, r, styles };
-        this.cards.push(card);
-        this.pushHistory("Add Card");
-        this.renderCard(card, true);
-        return id;
-    }
-
-    deleteCard(id) {
-        this.cards = this.cards.filter(c => c.id !== id);
-        const el = document.querySelector(`.flip-card[data-id="${id}"]`);
-        if (el) el.remove();
-        if (this.fullscreenId === id) this.closeFullscreen();
-        this.saveState();
-    }
-
-    updateCardContent(id, q, r) {
-        const card = this.cards.find(c => c.id === id);
-        if (!card) return;
-        if (q !== null) card.q = q;
-        if (r !== null) card.r = r;
-        
-        const el = document.querySelector(`.flip-card[data-id="${id}"]`);
-        if (el) {
-            if (q !== null) el.querySelector('.card-face:first-child .content').innerHTML = this.md(q);
-            if (r !== null) {
-                const rEl = el.querySelector('.response-content');
-                if (rEl) rEl.innerHTML = this.md(r);
-            }
-        }
-        this.saveState();
     }
 
     renderAll() {
-        const grid = document.getElementById('grid');
-        const empty = document.getElementById('emptyState');
-        grid.innerHTML = '';
-        
-        if (this.cards.length === 0) {
-            grid.appendChild(empty);
-            empty.style.display = 'flex';
-        } else {
-            empty.style.display = 'none';
-            this.cards.forEach(c => this.renderCard(c, false));
-        }
+        this.renderCards();
+        this.renderSelectionToolbar();
+        this.updateToggles();
+        this.updateStyleControls();
     }
 
-    renderCard(card, isNew) {
-        const grid = document.getElementById('grid');
-        const empty = document.getElementById('emptyState');
-        if (empty && empty.parentNode) empty.remove();
+    renderCards() {
+        const container = document.getElementById('cardContainer');
+        container.innerHTML = '';
+        this.cards.forEach((card, index) => {
+            const el = this.createCardElement(card, index);
+            container.appendChild(el);
+        });
+    }
 
+    createCardElement(card, index) {
         const div = document.createElement('div');
-        div.className = `flip-card ${isNew ? 'new' : ''}`;
-        div.dataset.id = card.id;
-        div.tabIndex = 0;
+        div.className = 'card' + (this.fullscreenId === index ? ' fullscreen' : '') + (this.selectedIds.has(index) ? ' selected' : '');
+        div.dataset.index = index;
         
-        if (card.styles && card.styles.locked) {
-            div.classList.add('locked');
-        }
-
-        let rHtml;
-        if (card.r === '...') {
-            if (this.streamingId === card.id) {
-                rHtml = '<div class="streaming"><span class="thinking-indicator">Thinking...</span><button class="stop-stream-btn" onclick="app.stopStream()">Stop</button></div>';
-            } else {
-                rHtml = '<div class="streaming"><span class="thinking-indicator">Thinking...</span></div>';
-            }
-        } else {
-            rHtml = this.md(card.r);
-        }
-
+        const q = card.q || '';
+        const a = card.a || '';
+        
         div.innerHTML = `
-            <div class="flip-card-inner">
-                <div class="card-face">
+            <div class="card-inner">
+                <div class="card-face card-front">
                     <div class="card-header">
-                        <span style="font-size:11px; opacity:0.5;">REQ</span>
+                        <span class="card-index">#${index + 1}</span>
                         <div class="card-actions">
-                            <button onclick="app.openCardMenu('${card.id}', event)"><i class="fas fa-ellipsis-v"></i></button>
-                            <button onclick="app.toggleSelect('${card.id}', event)"><i class="fas fa-check-circle"></i></button>
+                            <button class="btn-icon" data-action="favorite">★</button>
+                            <button class="btn-icon" data-action="duplicate">↕</button>
+                            <button class="btn-icon" data-action="delete">×</button>
                         </div>
                     </div>
-                    <div class="content">${this.md(card.q)}</div>
+                    <div class="card-content">
+                        <div class="card-field-label">Question</div>
+                        <div class="card-field" contenteditable="true" data-field="q">${this.escapeHTML(q)}</div>
+                    </div>
+                    <div class="card-content">
+                        <div class="card-field-label">Answer</div>
+                        <div class="card-field ${a ? '' : 'empty'}" contenteditable="true" data-field="a">${a ? this.escapeHTML(a) : 'Click to add answer...'}</div>
+                    </div>
                 </div>
                 <div class="card-face card-back">
                     <div class="card-header">
-                        <span style="font-size:11px; opacity:0.5;">RESPONSE</span>
+                        <span class="card-index">#${index + 1}</span>
                         <div class="card-actions">
-                            <button onclick="app.readCard('${card.id}', event)"><i class="fas fa-volume-up"></i></button>
-                            <button onclick="app.openCardMenu('${card.id}', event)"><i class="fas fa-ellipsis-v"></i></button>
+                            <button class="btn-icon" data-action="favorite">★</button>
+                            <button class="btn-icon" data-action="duplicate">↕</button>
+                            <button class="btn-icon" data-action="delete">×</button>
                         </div>
                     </div>
-                    <div class="response-content">${rHtml}</div>
+                    <div class="card-content">
+                        <div class="card-field-label">Answer</div>
+                        <div class="card-field" contenteditable="true" data-field="a">${this.escapeHTML(a)}</div>
+                    </div>
+                    <div class="card-content">
+                        <div class="card-field-label">Question</div>
+                        <div class="card-field ${q ? '' : 'empty'}" contenteditable="true" data-field="q">${q ? this.escapeHTML(q) : 'Click to add question...'}</div>
+                    </div>
                 </div>
             </div>
         `;
 
-        if (card.styles) this.applyCardStyleToEl(div, card.styles);
+        // Bind inner field events
+        const fields = div.querySelectorAll('.card-field');
+        fields.forEach(f => {
+            f.addEventListener('input', (e) => {
+                const newVal = e.target.textContent;
+                const otherField = f.dataset.field === 'q' 
+                    ? div.querySelector('.card-back .card-field[data-field="q"]')
+                    : div.querySelector('.card-front .card-field[data-field="a"]');
+                // Update other face preview if not empty
+                if (otherField) otherField.textContent = newVal || (f.dataset.field === 'q' ? 'Click to add question...' : 'Click to add answer...');
+                card[f.dataset.field] = newVal;
+            });
+            f.addEventListener('focus', () => {
+                this.editingId = index;
+                this.editingField = f.dataset.field;
+                this.stylingId = index;
+            });
+        });
 
-        this.attachCardEvents(div, card.id);
-        grid.appendChild(div);
+        // Card actions (inner)
+        const actionButtons = div.querySelectorAll('.btn-icon');
+        actionButtons.forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const action = btn.dataset.action;
+                if (action === 'delete') {
+                    this.deleteCard(index);
+                } else if (action === 'duplicate') {
+                    this.duplicateCard(index);
+                }
+            });
+        });
+
+        // Flip card on click
+        div.addEventListener('click', (e) => {
+            // If clicking on controls, don't flip
+            if (e.target.closest('.card-actions') || e.target.closest('.btn-icon') || e.target.isContentEditable) return;
+            this.flipCard(index);
+        });
+
+        return div;
     }
 
-    attachCardEvents(div, id) {
-        div.addEventListener('click', (e) => {
-            if (e.target.closest('button') || e.target.closest('.card-actions')) return;
-            if (this.selectedIds.size > 0) {
-                e.stopPropagation();
-                this.toggleSelect(id, e);
-                return;
-            }
-            div.classList.toggle('flipped');
-        });
+    renderSelectionToolbar() {
+        const toolbar = document.getElementById('selectionToolbar');
+        const count = this.selectedIds.size;
+        if (count === 0) {
+            toolbar.classList.remove('visible');
+            return;
+        }
+        toolbar.classList.add('visible');
+        document.getElementById('selCount').textContent = count + ' selected';
+    }
 
-        let lastTap = 0;
-        div.addEventListener('touchend', (e) => {
-            const currentTime = new Date().getTime();
-            const tapLength = currentTime - lastTap;
-            if (tapLength < 300 && tapLength > 0) {
-                if (e.target.closest('button') || e.target.closest('.card-actions')) return;
-                this.openFullscreen(id);
-                e.preventDefault();
-            }
-            lastTap = currentTime;
-        });
-        div.addEventListener('dblclick', (e) => {
-            if (!e.target.closest('button')) this.openFullscreen(id);
-        });
+    updateToggles() {
+        document.getElementById('toggleStream').checked = this.settings.streamEnabled;
+    }
 
-        let pressTimer;
-        div.addEventListener('touchstart', (e) => {
-            if (this.selectedIds.size > 0) return;
-            pressTimer = setTimeout(() => {
-                this.openCardMenu(id, e);
-                if (navigator.vibrate) navigator.vibrate(50);
-            }, 400);
-        });
-        div.addEventListener('touchend', () => clearTimeout(pressTimer));
-        div.addEventListener('touchmove', () => clearTimeout(pressTimer));
+    updateStyleControls() {
+        document.getElementById('stylePadding').value = this.styleVal('pad', 8);
+        document.getElementById('valPad').textContent = this.styleVal('pad', 8) + 'px';
+        document.getElementById('styleRadius').value = this.styleVal('radius', 12);
+        document.getElementById('valRad').textContent = this.styleVal('radius', 12) + 'px';
+        document.getElementById('styleWidth').value = this.styleVal('width', 2);
+        document.getElementById('valWid').textContent = this.styleVal('width', 2) + 'px';
+    }
 
-        div.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') div.classList.toggle('flipped');
-            if (e.key === ' ' && e.shiftKey) {
-                e.preventDefault();
-                this.openCardMenu(id);
-            }
-        });
+    styleVal(key, def) {
+        return this.theme[key] !== undefined ? this.theme[key] : def;
     }
 
     handleSendClick() {
         const input = document.getElementById('userInput');
-        const val = input.value.trim();
-        if (!val) return;
-
-        if (this.isListening) {
-            this.recognition.stop();
-            return;
-        }
-
-        if (this.settings.asrEnabled && this.recognizer) {
-            this.recognition.start();
-            return;
-        }
-
-        this.sendRequest(val);
+        const prompt = input.value.trim();
+        if (!prompt) return;
         input.value = '';
+        this.addUserCard(prompt);
+        this.processWithAgent(prompt);
     }
 
-    // FIX: Uniform scrolling logic
-    scrollToStreamingContent(element) {
-        if (!element) return;
-        // Only scroll if user is near bottom (within 150px)
-        const isNearBottom = (element.scrollHeight - element.scrollTop - element.clientHeight) < 150;
-        if (isNearBottom) {
-            element.scrollTop = element.scrollHeight;
-        }
+    addUserCard(text) {
+        this.cards.push({ q: text, a: '' });
+        this.renderAll();
+        this.saveState();
     }
 
-    async sendRequest(prompt, contextCardId = null) {
-    this.streamingId = contextCardId ? contextCardId : this.addCard(prompt, '...', {});
-
-    const cardEl = document.querySelector(`.flip-card[data-id="${this.streamingId}"]`);
-    if(cardEl && !contextCardId) setTimeout(() => cardEl.classList.add('flipped'), 100);
-
-    let fullPrompt = SYSTEM_PROMPT + "\n\nUser: " + prompt;
-    if (contextCardId) {
-        const oldCard = this.cards.find(c => c.id === contextCardId);
-        if (oldCard) {
-            const styleContext = (oldCard.styles && oldCard.styles.locked) ? `(Note: Original card has locked styles)` : '';
-            fullPrompt = `Previous Request: "${oldCard.q}"\nPrevious Response: "${oldCard.r}" ${styleContext}\n\nUser Instruction: ${prompt}\n\nProvide a continuation or refinement.`;
+    showToast(message, type = 'info') {
+        let toast = document.getElementById('liveToast');
+        if (!toast) {
+            toast = document.createElement('div');
+            toast.id = 'liveToast';
+            document.body.appendChild(toast);
         }
+        toast.textContent = message;
+        toast.className = 'toast show ' + type;
+        setTimeout(() => { toast.className = 'toast'; }, 3000);
     }
 
-    this.abortController = new AbortController();
-    const signal = this.abortController.signal;
-
-    try {
-        const url = this.getProxyUrl();
-        const res = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId: this.sessionId, prompt: fullPrompt }),
-            signal
-        });
-
-        if (!res.ok) throw new Error(`Proxy Error: ${res.status}`);
-
-        // Backend returns plain JSON, not a stream
-        const data = await res.json();
-        const accumulated = data.response || '';
-
-        this.updateStreamingContent(accumulated, true);
-        this.finalizeResponse(accumulated);
-
-    } catch (err) {
-        if (err.name === 'AbortError') {
-            const el = document.querySelector(`.flip-card[data-id="${this.streamingId}"] .response-content`);
-            if (el) el.innerHTML += '<div style="color:#ff6b6b; margin-top:10px;">[Stopped]</div>';
-        } else {
-            const el = document.querySelector(`.flip-card[data-id="${this.streamingId}"] .response-content`);
-            if (el) el.innerHTML = `<span style="color: #ff6b6b; font-weight: bold;">Error: ${err.message}</span>`;
-        }
-        this.streamingId = null;
-    } finally {
-        this.abortController = null;
-    }
-}
-
-    stopStream() {
-        if (this.abortController) {
-            this.abortController.abort();
-            this.abortController = null;
-            this.showToast("Streaming stopped");
-        }
-    }
-
-    // FIX: Consistent scrolling for Card View, Grid View, and Fullscreen
-    updateStreamingContent(text, replace = false) {
-        if (!this.streamingId) return;
-        const visible = text.replace(/![^!]+!/g, '');
-        
-        // 1. Update Card View (List/Grid)
-        const el = document.querySelector(`.flip-card[data-id="${this.streamingId}"] .response-content`);
-        if (el) {
-            if (replace) {
-                el.innerHTML = this.md(visible);
-            } else {
-                el.innerHTML = this.md(visible) + '<div class="streaming"><span class="cursor"></span></div>';
-            }
-            // Apply uniform scroll logic
-            this.scrollToStreamingContent(el);
-        }
-
-        // 2. Update Fullscreen if active
-        if (this.fullscreenId === this.streamingId) {
-            const fsPane = document.getElementById('fsResponsePane');
-            if (fsPane) {
-                // Inside fullscreen, we want to scroll the pane container
-                if (replace) {
-                    document.getElementById('fsResponse').innerHTML = this.md(visible);
-                } else {
-                    document.getElementById('fsResponse').innerHTML = this.md(visible) + '<div class="streaming"><span class="cursor"></span></div>';
-                }
-                this.scrollToStreamingContent(fsPane);
-            }
-        }
-    }
-
-    finalizeResponse(fullText) {
-        const id = this.streamingId;
-        if (!id) return;
-
-        const { cleanText, styles, themeUpdate, actions } = this.parseCommands(fullText);
-        const card = this.cards.find(c => c.id === id);
-        
-        if (card) {
-            if (card.styles && card.styles.locked) {
-                this.showToast("Card Locked - Style changes ignored");
-            } else {
-                if (Object.keys(styles).length > 0) {
-                    card.styles = { ...card.styles, ...styles };
-                }
-            }
-            card.r = cleanText;
-        }
-
-        const cleanHtml = this.md(cleanText);
-        const el = document.querySelector(`.flip-card[data-id="${id}"] .response-content`);
-        if (el) el.innerHTML = cleanHtml;
-
-        if (this.fullscreenId === id) {
-            document.getElementById('fsResponse').innerHTML = cleanHtml;
-            // Ensure final scroll to bottom
-            const fsPane = document.getElementById('fsResponsePane');
-            if (fsPane) fsPane.scrollTop = fsPane.scrollHeight;
-        }
-
-        // Apply visual styles to card (only if Global Theme is NOT locked)
-        if (card && (!card.styles || !card.styles.locked)) {
-            if (Object.keys(styles).length > 0 && !this.theme.locked) {
-                const cardEl = document.querySelector(`.flip-card[data-id="${id}"]`);
-                if (cardEl) this.applyCardStyleToEl(cardEl, styles);
-            }
-        }
-
-        if (themeUpdate) {
-            if (this.theme.locked) {
-                this.showToast("Global Theme Locked");
-            } else {
-                this.theme = { ...this.theme, ...themeUpdate };
-                this.applyTheme();
-                this.saveState();
-                this.showToast(`Theme: ${themeUpdate.name || 'Updated'}`);
-            }
-        }
-
-        if (actions.length > 0) {
-            actions.forEach(action => {
-                if (action === 'clear') this.clearAll();
-                if (action === 'merge') {
-                     if (this.selectedIds.size > 1) {
-                         this.merge();
-                     } else {
-                         this.showToast("AI requested merge, but no cards selected.");
-                     }
-                }
-                if (action.startsWith('view:')) {
-                    const view = action.split(':')[1];
-                    if (['list', 'grid', 'full'].includes(view)) {
-                        this.setCardView(view);
-                        this.showToast(`AI switched to ${view}`);
-                    }
-                }
-            });
-        }
-
-        if (this.settings.autoTTS) this.readCard(id);
-
-        this.streamingId = null;
-        this.pushHistory("AI Response");
-    }
-
-    parseCommands(text) {
-        const cmdRegex = /!(theme|bg|text|border|pad|radius|font|bold|italic|css|action):?([^!]+)!/gi;
-        let styles = {};
-        let actions = [];
-        let themeUpdate = null;
-        let match;
-        let safeText = text;
-
-        while ((match = cmdRegex.exec(text)) !== null) {
-            const type = match[1].toLowerCase();
-            const val = match[2].trim();
-
-            if (type === 'theme') {
-                const [name, bg, cardBg, textC, border, primary] = val.split(',').map(s => s.trim());
-                themeUpdate = { name, bg, cardBg, text: textC, border, primary };
-            } else if (type === 'bg') styles.backgroundColor = val;
-            else if (type === 'text') styles.color = val;
-            else if (type === 'border') styles.borderColor = val;
-            else if (type === 'pad') styles.padding = val.endsWith('px') ? val : val + 'px';
-            else if (type === 'radius') styles.borderRadius = val.endsWith('px') ? val : val + 'px';
-            else if (type === 'font') styles.fontSize = val.endsWith('px') ? val : val + 'px';
-            else if (type === 'bold') styles.fontWeight = 'bold';
-            else if (type === 'italic') styles.fontStyle = 'italic';
-            else if (type === 'css') styles.customCSS = val;
-            else if (type === 'action') actions.push(val);
-
-            safeText = safeText.replace(match[0], '');
-        }
-
-        return { cleanText: safeText.trim(), styles, themeUpdate, actions };
-    }
-
-    applyCardStyleToEl(el, styles) {
-        const face = el.querySelectorAll('.card-face');
-        face.forEach(f => {
-            if (styles.color) f.style.color = styles.color;
-            if (styles.backgroundColor) f.style.backgroundColor = styles.backgroundColor;
-            if (styles.fontSize) f.style.fontSize = styles.fontSize;
-            if (styles.fontWeight) f.style.fontWeight = styles.fontWeight;
-            if (styles.fontStyle) f.style.fontStyle = styles.fontStyle;
-            if (styles.padding) f.style.padding = styles.padding;
-        });
-        
-        if (styles.borderColor) el.style.borderColor = styles.borderColor;
-        if (styles.borderRadius) el.style.borderRadius = styles.borderRadius;
-        
-        if (styles.customCSS) {
-            const id = `style-${el.dataset.id}`;
-            let styleTag = document.getElementById(id);
-            if (!styleTag) {
-                styleTag = document.createElement('style');
-                styleTag.id = id;
-                document.head.appendChild(styleTag);
-            }
-            styleTag.textContent = `[data-id="${el.dataset.id}"] ${styles.customCSS}`;
-        }
-    }
-
-    openCardMenu(id, e) {
-        if (e && e.preventDefault) e.preventDefault();
-        if (e && e.stopPropagation) e.stopPropagation();
-        
-        this.contextMenuTargetId = id;
-        const menu = document.getElementById('cardMenu');
-        
-        let x, y;
-        if (e && e.clientX) {
-            x = e.clientX;
-            y = e.clientY;
-        } else if (e && e.touches && e.touches[0]) {
-            x = e.touches[0].clientX;
-            y = e.touches[0].clientY;
-        } else {
-            const el = document.querySelector(`.flip-card[data-id="${id}"]`);
-            if (el) {
-                const rect = el.getBoundingClientRect();
-                x = rect.left + rect.width / 2;
-                y = rect.top + rect.height / 2;
-            } else {
-                x = window.innerWidth / 2;
-                y = window.innerHeight / 2;
-            }
-        }
-
-        if (x + 200 > window.innerWidth) x = window.innerWidth - 210;
-        if (y + 300 > window.innerHeight) y = window.innerHeight - 310;
-
-        menu.style.left = `${x}px`;
-        menu.style.top = `${y}px`;
-        menu.classList.add('active');
-    }
-
-    closeCardMenu() {
-        document.getElementById('cardMenu').classList.remove('active');
-        this.contextMenuTargetId = null;
-    }
-
-    handleCardAction(action, id) {
-        const card = this.cards.find(c => c.id === id);
-        if (!card) return;
-
-        switch (action) {
-            case 'continue': this.promptAction('continue', id); break;
-            case 'split': this.promptAction('split', id); break;
-            case 'merge':
-                if (!this.selectedIds.has(id)) {
-                    this.selectedIds.add(id);
-                    const el = document.querySelector(`.flip-card[data-id="${id}"]`);
-                    if (el) el.classList.add('selected');
-                }
-                if (this.selectedIds.size < 2) {
-                    this.showToast("Need at least 2 cards to merge");
-                    this.updateSelectionUI();
-                    return;
-                }
-                this.updateSelectionUI();
-                this.promptAction('merge');
-                break;
-            case 'ai-edit': this.promptAction('ai-edit', id); break;
-            case 'ai-theme': 
-                this.editingId = id; 
-                this.openModal('aiThemeModal'); 
-                break;
-            case 'copy': 
-                navigator.clipboard.writeText(card.r || card.q || '');
-                this.showToast('Copied to clipboard');
-                break;
-            case 'fullscreen': this.openFullscreen(id); break;
-            case 'delete': 
-                if(confirm("Delete this card?")) {
-                    this.deleteCard(id);
-                    this.showToast('Card deleted');
-                }
-                break;
-            case 'style':
-                this.stylingId = id;
-                this.loadStyleValues(card.styles || {});
-                this.openModal('styleModal');
-                break;
-            case 'manual-edit-response':
-                this.editingId = id; this.editingField = 'r';
-                this.openEditor(card.r);
-                break;
-            case 'manual-edit-question':
-                this.editingId = id; this.editingField = 'q';
-                this.openEditor(card.q);
-                break;
-        }
-    }
-
-    openModal(id) {
-        document.getElementById(id).classList.add('active');
-    }
-
-    closeModal(id) {
-        document.getElementById(id).classList.remove('active');
-        if (id === 'promptModal') this.promptContext = null;
-        if (id === 'styleModal') this.stylingId = null;
-        if (id === 'textEditorModal') { this.editingId = null; this.editingField = null; }
-    }
-
-    openEditor(text) {
-        document.getElementById('textEditorArea').value = text;
-        document.getElementById('editorTitle').textContent = `Edit ${this.editingField === 'q' ? 'Question' : 'Response'}`;
-        this.openModal('textEditorModal');
-    }
-
-    saveManualEdit() {
-        const val = document.getElementById('textEditorArea').value.trim();
-        if (this.editingId && this.editingField) {
-            this.pushHistory("Manual Edit");
-            this.updateCardContent(this.editingId, this.editingField === 'q' ? val : null, this.editingField === 'r' ? val : null);
-            this.closeModal('textEditorModal');
-        }
-    }
-
-    loadStyleValues(styles) {
-        const lockCheck = document.getElementById('styleLocked');
-        lockCheck.checked = !!styles.locked;
-
-        document.getElementById('styleColor').value = styles.color || '#f5f5f5';
-        document.getElementById('styleBg').value = styles.backgroundColor || '#1e1e1e';
-        document.getElementById('styleBorder').value = styles.borderColor || '#333333';
-        document.getElementById('stylePadding').value = parseInt(styles.padding || '16');
-        document.getElementById('styleRadius').value = parseInt(styles.borderRadius || '16');
-        document.getElementById('styleWidth').value = parseInt(styles.borderWidth || '1');
-        document.getElementById('styleCustom').value = styles.customCSS || '';
-
-        document.getElementById('valPad').textContent = (parseInt(styles.padding || '16')) + 'px';
-        document.getElementById('valRad').textContent = (parseInt(styles.borderRadius || '16')) + 'px';
-        document.getElementById('valWid').textContent = (parseInt(styles.borderWidth || '1')) + 'px';
-
-        document.querySelectorAll('.toggle-btn[data-style-prop]').forEach(btn => {
-            const prop = btn.dataset.styleProp;
-            const val = btn.dataset.styleVal;
-            const current = styles[prop];
-            if ((prop === 'textDecoration' && current === 'underline') || current === val) {
-                btn.classList.add('active');
-            } else {
-                btn.classList.remove('active');
-            }
-        });
-    }
-
-    saveStyles() {
-        if (!this.stylingId) return;
-        
-        // FIX: Global Theme Lock also prevents manual style changes
-        if (this.theme.locked) {
-            this.showToast("Global Theme Locked - Cannot change card styles");
-            this.closeModal('styleModal');
-            return;
-        }
-
-        const isLocked = document.getElementById('styleLocked').checked;
-        
-        const styles = {
-            locked: isLocked,
-            color: document.getElementById('styleColor').value,
-            backgroundColor: document.getElementById('styleBg').value,
-            borderColor: document.getElementById('styleBorder').value,
-            padding: document.getElementById('stylePadding').value + 'px',
-            borderRadius: document.getElementById('styleRadius').value + 'px',
-            borderWidth: document.getElementById('styleWidth').value + 'px',
-            customCSS: document.getElementById('styleCustom').value
+    // --- Core Agent Processing ---
+    async processWithAgent(prompt) {
+        const cardsState = JSON.stringify(this.cards.map(c => ({ q: c.q, r: c.a })));
+        const body = {
+            prompt: prompt,
+            cards: this.cards
         };
 
-        document.querySelectorAll('.toggle-btn.active').forEach(btn => {
-            const prop = btn.dataset.styleProp;
-            const val = btn.dataset.styleVal;
-            if (prop === 'textDecoration') {
-                styles.textDecoration = val;
-            } else {
-                styles[prop] = val;
-            }
-        });
-
-        const card = this.cards.find(c => c.id === this.stylingId);
-        if (card) {
-            card.styles = { ...(card.styles || {}), ...styles };
-            this.saveState();
-            
-            const el = document.querySelector(`.flip-card[data-id="${this.stylingId}"]`);
-            if (el) {
-                this.applyCardStyleToEl(el, styles);
-                if(isLocked) el.classList.add('locked');
-                else el.classList.remove('locked');
-            }
-            
-            this.pushHistory("Style Change");
-            this.closeModal('styleModal');
-        }
-    }
-
-    promptAction(action, id = null) {
-        if (!id && this.selectedIds.size > 0) {
-            id = Array.from(this.selectedIds)[0];
-        }
-        if (!id && action !== 'merge') return; 
-
-        this.promptContext = { action, id };
-        const title = document.getElementById('promptTitle');
-        const desc = document.getElementById('promptDesc');
-        const btn = document.getElementById('promptConfirmBtn');
-
-        if (action === 'continue') {
-            title.textContent = "Continue Card";
-            desc.textContent = "Instruct the AI on how to continue the response.";
-            btn.textContent = "Continue";
-        } else if (action === 'split') {
-            title.textContent = "Split Card";
-            desc.textContent = "How should the AI split this content?";
-            btn.textContent = "Split";
-        } else if (action === 'ai-edit') {
-            title.textContent = "AI Edit";
-            desc.textContent = "What changes do you want?";
-            btn.textContent = "Edit";
-        } else if (action === 'merge') {
-            title.textContent = "Merge Cards";
-            desc.textContent = "Combine selected cards. Instructions?";
-            btn.textContent = `Merge (${this.selectedIds.size})`;
-        }
-
-        this.openModal('promptModal');
-    }
-
-    executePromptAction() {
-        const instructions = document.getElementById('promptArea').value.trim();
-        const { action, id } = this.promptContext;
-        const card = this.cards.find(c => c.id === id);
-        
-        this.closeModal('promptModal');
-        document.getElementById('promptArea').value = '';
-
-        if (action === 'merge') {
-            this.merge(instructions);
-            return;
-        }
-
-        if (!card) return;
-        let userPrompt = "";
-
-        if (action === 'continue') {
-            userPrompt = `CONTINUE: Original: "${card.q}". Current: "${card.r}". Instruct: ${instructions}`;
-            this.sendRequest(userPrompt, id);
-        } else if (action === 'split') {
-            userPrompt = `SPLIT: ${instructions}. Text: ${card.r}`;
-            this.sendRequest(userPrompt, null);
-        } else if (action === 'ai-edit') {
-            userPrompt = `EDIT: ${instructions}. Current: ${card.r}`;
-            this.sendRequest(userPrompt, null);
-        }
-    }
-
-    merge(instructions = "") {
-        if (this.selectedIds.size < 2) {
-            this.showToast("Select 2+ cards to merge");
-            return;
-        }
-
-        const sel = Array.from(this.selectedIds).map(id => this.cards.find(c => c.id === id));
-        const content = sel.map(c => `---\n${c.q}\n${c.r}`).join('\n');
-        const prompt = instructions 
-            ? `Merge these into one based on: ${instructions}\n\n${content}`
-            : `Combine these into one coherent response:\n\n${content}`;
-
-        const id = this.addCard(`Merged ${sel.length} cards`, '...', {});
-        this.streamingId = id;
-        this.clearSelection(); 
-        this.requestMergeUpdate(id, prompt);
-    }
-
-    async requestMergeUpdate(id, prompt) {
-    this.abortController = new AbortController();
-    const signal = this.abortController.signal;
-
-    try {
         const url = this.getProxyUrl();
+        const headers = { 'Content-Type': 'application/json' };
+
+        // Show thinking state
+        this.showToast('Thinking...', 'info');
+
+        try {
+            if (this.settings.streamEnabled) {
+                await this.streamFetchCompletion(url, headers, body, (token) => {
+                    const latest = this.cards[this.cards.length - 1];
+                    if (latest) {
+                        latest.a = (latest.a || '') + token;
+                        this.renderAll();
+                    }
+                });
+            } else {
+                const response = await this.fetchWithTimeout(url, { method: 'POST', headers, body });
+                const data = await response.json();
+                const answer = data.response || 'No response';
+                this.cards.push({ q: prompt, a: answer });
+                this.renderAll();
+                this.saveState();
+                this.showToast('Response complete');
+            }
+        } catch (error) {
+            console.error('Agent error:', error);
+            this.showToast('Error: ' + error.message, 'error');
+        }
+    }
+
+    async streamFetchCompletion(url, headers, body, onToken) {
+        const fullBody = JSON.stringify(body);
+        const controller = new AbortController();
+        this.abortController = controller;
+
         const res = await fetch(url, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ sessionId: this.sessionId, prompt: SYSTEM_PROMPT + "\n\nUser: " + prompt }),
-            signal
+            headers: { ...headers, 'Content-Type': 'application/json' },
+            body: fullBody,
+            signal: controller.signal
         });
-        if (!res.ok) throw new Error("Proxy Error");
 
-        const data = await res.json();
-        const accumulated = data.response || '';
-
-        this.updateStreamingContent(accumulated, true);
-        this.finalizeResponse(accumulated);
-    } catch (err) {
-        if (err.name === 'AbortError') {
-            const el = document.querySelector(`.flip-card[data-id="${id}"] .response-content`);
-            if (el) el.innerHTML += '<div style="color:#ff6b6b;">[Merge Stopped]</div>';
-            return;
+        if (!res.ok) {
+            const text = await res.text();
+            throw new Error('HTTP ' + res.status + ': ' + text);
         }
-        const el = document.querySelector(`.flip-card[data-id="${id}"] .response-content`);
-        if (el) el.innerHTML = `<span style="color: #ff6b6b;">Merge Failed: ${err.message}</span>`;
-    } finally {
-        this.abortController = null;
-       }
-    }
 
-    applyAITheme() {
-        const desc = document.getElementById('aiThemePrompt').value.trim();
-        if (!desc) return;
-        
-        if (this.editingId) {
-            const card = this.cards.find(c => c.id === this.editingId);
-            if (card && card.styles && card.styles.locked) {
-                this.showToast("Card Locked - Rejected");
-                this.closeModal('aiThemeModal');
-                return;
+        const ct = res.headers.get('Content-Type');
+        if (ct && ct.includes('text/event-stream')) {
+            const reader = res.body.getReader();
+            let buffer = '';
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += this.decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop();
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed) continue;
+                    if (trimmed === '[DONE]') continue;
+                    if (trimmed.startsWith('data: ')) {
+                        const raw = trimmed.slice(6).trim();
+                        try {
+                            const obj = JSON.parse(raw);
+                            if (obj.response) onToken(obj.response);
+                        } catch (e) {
+                            // ignore malformed lines
+                        }
+                    }
+                }
+            }
+            if (buffer) {
+                try {
+                    const obj = JSON.parse(buffer.trim());
+                    if (obj.response) onToken(obj.response);
+                } catch (e) {}
+            }
+        } else {
+            // Fallback: assume JSON
+            const text = await res.text();
+            try {
+                const obj = JSON.parse(text);
+                onToken(obj.response || text);
+            } catch {
+                onToken(text);
             }
         }
+    }
 
-        if (this.theme.locked) {
-            this.showToast("Global Theme Locked");
-            this.closeModal('aiThemeModal');
-            return;
+    async fetchWithTimeout(url, options, timeout = 120000) {
+        const controller = new AbortController();
+        const id = setTimeout(() => controller.abort(), timeout);
+        try {
+            const res = await fetch(url, { ...options, signal: controller.signal });
+            clearTimeout(id);
+            return res;
+        } catch (err) {
+            clearTimeout(id);
+            throw err;
         }
+    }
 
-        const prompt = `Generate ONLY a style definition in this exact format:
-!theme:Name,BgHex,CardBgHex,TextHex,BorderHex,PrimaryHex!
-Based on this vibe: ${desc}
-Do not output any other text.`;
-
-        this.closeModal('aiThemeModal');
-        this.showToast("Generating Theme...");
-        
-        const url = this.getProxyUrl();
-fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt: prompt })
-})
-.then(res => res.json())
-.then(data => {
-    const fullText = data.response || '';
-    const { themeUpdate } = this.parseCommands(fullText);
-    if (themeUpdate) {
-        this.theme = { ...this.theme, ...themeUpdate };
-        this.applyTheme();
+    // --- Card Operations ---
+    deleteCard(index) {
+        this.cards.splice(index, 1);
+        this.renderAll();
         this.saveState();
-        this.showToast(`Theme: ${themeUpdate.name}`);
-    } else {
-        this.showToast("Theme generation failed (parse error)");
-    }
-})
-.catch(e => {
-    this.showToast("Theme generation failed");
-});
-    toggleSelect(id, e) {
-        if (e && e.stopPropagation) e.stopPropagation();
-        const el = document.querySelector(`.flip-card[data-id="${id}"]`);
-        if (this.selectedIds.has(id)) {
-            this.selectedIds.delete(id);
-            el.classList.remove('selected');
-        } else {
-            this.selectedIds.add(id);
-            el.classList.add('selected');
-        }
-        this.updateSelectionUI();
     }
 
-    updateSelectionUI() {
-        const bar = document.getElementById('selectionBar');
-        const count = document.getElementById('selectCount');
-        const mergeBtn = document.getElementById('mergeSelected');
-        const splitBtn = document.getElementById('splitSelected');
-
-        if (this.selectedIds.size > 0) {
-            bar.classList.add('active');
-            count.textContent = `${this.selectedIds.size}`;
-            mergeBtn.style.display = this.selectedIds.size > 1 ? 'inline-flex' : 'none';
-            splitBtn.style.display = this.selectedIds.size === 1 ? 'inline-flex' : 'none';
-        } else {
-            bar.classList.remove('active');
-        }
+    duplicateCard(index) {
+        const original = this.cards[index];
+        this.cards.push({ q: original.q, a: original.a });
+        this.renderAll();
+        this.saveState();
     }
 
-    clearSelection() {
-        this.selectedIds.forEach(id => {
-            const el = document.querySelector(`.flip-card[data-id="${id}"]`);
-            if (el) el.classList.remove('selected');
-        });
-        this.selectedIds.clear();
-        this.updateSelectionUI();
+    flipCard(index) {
+        this.cards[index].flipped = !this.cards[index].flipped;
+        this.renderAll();
+        this.saveState();
     }
 
     bulkDelete() {
-        if (!confirm(`Delete ${this.selectedIds.size} cards?`)) return;
-        this.pushHistory("Bulk Delete");
-        this.selectedIds.forEach(id => {
-            this.cards = this.cards.filter(c => c.id !== id);
-            const el = document.querySelector(`.flip-card[data-id="${id}"]`);
-            if (el) el.remove();
-        });
+        if (this.selectedIds.size === 0) return;
+        const ordered = [...this.selectedIds].sort((a, b) => b - a);
+        ordered.forEach(i => this.cards.splice(i, 1));
         this.clearSelection();
-        this.saveState();
-        if (this.cards.length === 0) {
-            this.renderAll();
-        }
-    }
-
-    openFullscreen(id) {
-        const card = this.cards.find(c => c.id === id);
-        if (!card) return;
-
-        this.fullscreenId = id;
-        this.fsFlipped = false;
-
-        const headerTitle = document.querySelector('.fs-header h3');
-        if (headerTitle) headerTitle.textContent = `Response: ${card.q.substring(0, 50)}...`;
-
-        const requestPane = document.getElementById('fsRequestPane');
-        const requestContent = document.getElementById('fsRequest');
-        requestContent.innerHTML = this.md(card.q);
-        requestPane.style.display = 'none';
-
-        const responseContent = document.getElementById('fsResponse');
-        if (card.r === '...' && this.streamingId === id) {
-            responseContent.innerHTML = '<div class="streaming"><span class="thinking-indicator">Thinking...</span><button class="stop-stream-btn" onclick="app.stopStream()">Stop</button></div>';
-        } else {
-            responseContent.innerHTML = this.md(card.r);
-        }
-
-        const ov = document.getElementById('fullscreenOverlay');
-        ov.classList.add('active');
-        
-        // Scroll to bottom on open
-        setTimeout(() => {
-            const responsePane = document.getElementById('fsResponsePane');
-            if (responsePane) responsePane.scrollTop = responsePane.scrollHeight;
-        }, 50);
-    }
-
-    closeFullscreen() {
-        document.getElementById('fullscreenOverlay').classList.remove('active');
-        this.fullscreenId = null;
-    }
-
-    toggleFullscreenFlip() {
-        if (!this.fullscreenId) return;
-        this.fsFlipped = !this.fsFlipped;
-        const requestPane = document.getElementById('fsRequestPane');
-        const responsePane = document.getElementById('fsResponsePane');
-        
-        if (this.fsFlipped) {
-            requestPane.style.display = 'block';
-            responsePane.style.display = 'none';
-        } else {
-            requestPane.style.display = 'none';
-            responsePane.style.display = 'block';
-        }
-    }
-
-    toggleNativeFullscreen() {
-        if (!document.fullscreenElement) {
-            document.documentElement.requestFullscreen().catch((e) => {
-                this.showToast("Fullscreen blocked by browser");
-            });
-        } else {
-            if (document.exitFullscreen) {
-                document.exitFullscreen();
-            }
-        }
-    }
-    
-    readCurrentFullscreen() {
-        if (this.fullscreenId) this.readCard(this.fullscreenId);
-    }
-
-    setCardView(view) {
-        this.settings.view = view;
-        document.body.className = ''; 
-        if (view === 'grid') document.body.classList.add('view-grid');
-        if (view === 'list') document.body.classList.add('view-list');
-        if (view === 'full') document.body.classList.add('view-full');
+        this.renderAll();
         this.saveState();
     }
 
-    cycleView() {
-        const views = ['list', 'grid', 'full'];
-        const next = views[(views.indexOf(this.settings.view) + 1) % views.length];
-        this.setCardView(next);
-        this.showToast(`View: ${next.toUpperCase()}`);
-    }
-
-    applyView() {
-        this.setCardView(this.settings.view);
-    }
-
-    toggleThemeMode() {
-        const current = document.body.getAttribute('data-theme');
-        const next = current === 'light' ? 'dark' : 'light';
-        document.body.setAttribute('data-theme', next);
-        if (next === 'light') {
-            this.theme.bg = '#f8f9fa'; this.theme.cardBg = '#ffffff'; this.theme.text = '#222'; this.theme.border = '#ddd';
+    // --- Selection ---
+    toggleSelection(index) {
+        if (this.selectedIds.has(index)) {
+            this.selectedIds.delete(index);
         } else {
-            this.theme.bg = '#121212'; this.theme.cardBg = '#1e1e1e'; this.theme.text = '#f5f5f5'; this.theme.border = '#333';
+            this.selectedIds.add(index);
         }
+        this.renderSelectionToolbar();
+        this.renderAll();
+    }
+
+    clearSelection() {
+        this.selectedIds.clear();
+        this.renderSelectionToolbar();
+        this.renderAll();
+    }
+
+    // --- Prompt Action ---
+    executePromptAction() {
+        const action = document.getElementById('promptAction').value;
+        const promptInput = document.getElementById('userInput');
+        const prompt = promptInput.value.trim();
+        if (!prompt) return;
+        promptInput.value = '';
+        this.addUserCard(prompt);
+        if (action === 'merge' && this.cards.length > 1) {
+            const last = this.cards[this.cards.length - 1];
+            const allQ = this.cards.map(c => c.q).join('\n');
+            last.q = allQ;
+        }
+        this.processWithAgent(prompt);
+    }
+
+    // --- Undo/History ---
+    undo() {
+        if (this.history.length === 0) {
+            this.showToast("Nothing to undo");
+            return;
+        }
+        const lastState = this.history.pop();
+        this.cards = lastState.cards;
+        if (!this.theme.locked) this.theme = lastState.theme;
+        this.saveState();
+        this.renderAll();
         this.applyTheme();
-        this.saveState();
+        this.showToast("Undid: " + lastState.action);
     }
 
-    toggleThemeLock() {
-        this.theme.locked = !this.theme.locked;
-        document.getElementById('lockLabel').textContent = this.theme.locked ? "Theme Locked" : "Lock Theme";
-        this.showToast(this.theme.locked ? "Global Theme Locked" : "Global Theme Unlocked");
-        this.saveState();
+    // --- Export/Import ---
+    exportData() {
+        const data = {
+            cards: this.cards,
+            theme: this.theme,
+            settings: this.settings,
+            sessionId: this.sessionId
+        };
+        const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `ai_ncards_export_${Date.now()}.json`;
+        a.click();
+        this.showToast("Export downloaded");
     }
 
-    saveAppearance() {
-        const proxyInput = document.getElementById('proxyUrlInput');
-        if (proxyInput && proxyInput.value.trim()) {
-            this.settings.proxyUrl = proxyInput.value.trim();
+    importData(input) {
+        const file = input.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const data = JSON.parse(e.target.result);
+                this.pushHistory("Pre-Import Backup");
+                this.cards = data.cards || [];
+                this.theme = data.theme || this.theme;
+                this.settings = data.settings || this.settings;
+                this.sessionId = data.sessionId || this.sessionId;
+                this.renderAll();
+                this.applyTheme();
+                this.applyView();
+                this.saveState();
+                this.showToast("Import Successful");
+                this.closeModal('settingsModal');
+            } catch (err) {
+                this.showToast("Import failed");
+            }
+            input.value = '';
+        };
+        reader.readAsText(file);
+    }
+
+    // --- Filter & Search ---
+    handleFilter() {
+        const term = document.getElementById('filterInput').value.toLowerCase();
+        const cards = document.querySelectorAll('#cardContainer .card');
+        cards.forEach(card => {
+            const text = card.textContent.toLowerCase();
+            card.style.display = text.includes(term) ? '' : 'none';
+        });
+    }
+
+    // --- Keyboard ---
+    handleKeyDown(e) {
+        if (e.key === 'Escape') {
+            this.clearSelection();
+            this.closeAllModals();
+        }
+        if (e.key === 'Delete' && this.selectedIds.size > 0) {
+            const ordered = [...this.selectedIds].sort((a, b) => b - a);
+            ordered.forEach(i => this.cards.splice(i, 1));
+            this.clearSelection();
+            this.renderAll();
             this.saveState();
-        }
-        
-        this.pushHistory("Appearance Save");
-        this.showToast("Appearance Saved");
-    }
-
-    applyTheme() {
-        const r = document.documentElement.style;
-        r.setProperty('--primary', this.theme.primary);
-        r.setProperty('--bg', this.theme.bg);
-        r.setProperty('--card-bg', this.theme.cardBg);
-        r.setProperty('--text', this.theme.text);
-        r.setProperty('--border', this.theme.border);
-        const brand = document.getElementById('brandPlaceholder');
-        if (brand) brand.textContent = this.theme.name || 'ai-Ncards';
-    }
-
-    initASR() {
-        if ("webkitSpeechRecognition" in window || "SpeechRecognition" in window) {
-            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-            this.recognition = new SpeechRecognition();
-            this.recognition.continuous = false;
-            this.recognition.lang = 'en-US';
-            this.recognition.interimResults = false;
-
-            this.recognition.onstart = () => {
-                this.isListening = true;
-                const btn = document.getElementById('sendBtn');
-                btn.innerHTML = '<i class="fas fa-stop"></i>';
-                btn.classList.add('listening');
-                btn.title = "Stop Listening";
-            };
-
-            this.recognition.onend = () => {
-                this.isListening = false;
-                const btn = document.getElementById('sendBtn');
-                btn.innerHTML = '⏎';
-                btn.classList.remove('listening');
-                btn.title = "Send";
-            };
-
-            this.recognition.onresult = (event) => {
-                const transcript = event.results[0][0].transcript;
-                document.getElementById('userInput').value = transcript;
-            };
-        }
-    }
-
-    toggleASR() {
-        this.settings.asrEnabled = !this.settings.asrEnabled;
-        this.updateToggles();
-        this.saveState();
-    }
-
-    toggleTTS() {
-        this.settings.autoTTS = !this.settings.autoTTS;
-        this.updateToggles();
-        this.saveState();
-    }
-
-    updateToggles() {
-        const asrBtn = document.getElementById('asrToggle');
-        const ttsBtn = document.getElementById('ttsToggle');
-        if (asrBtn) asrBtn.classList.toggle('active', this.settings.asrEnabled);
-        if (ttsBtn) ttsBtn.classList.toggle('active', this.settings.autoTTS);
-    }
-
-    readCard(id, e) {
-        if (e && e.stopPropagation) e.stopPropagation();
-        const card = this.cards.find(c => c.id === id);
-        if (!card || !card.r) return;
-        
-        if (responsiveVoice.isPlaying()) {
-            responsiveVoice.cancel();
-        } else {
-            const text = card.r.replace(/[#*_`>~-]/g, '').substring(0, 2000);
-            responsiveVoice.speak(text, "US English Female", { rate: 1.1 });
-        }
-    }
-
-    showToast(msg) {
-        const t = document.getElementById('toast');
-        t.textContent = msg;
-        t.classList.add('show');
-        setTimeout(() => t.classList.remove('show'), 2000);
-    }
-
-    md(text) {
-        if (!text) return '';
-        try {
-            return DOMPurify.sanitize(marked.parse(text));
-        } catch (e) {
-            console.error("Markdown parsing error", e);
-            return text;
         }
     }
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-    window.app = new App();
-    window.app.init();
-});
+const app = new App();
+app.init();
+
+// Global bindings for inline onclick
+window.kardsApp = app;
+window.showToast = (msg, type) => app.showToast(msg, type);

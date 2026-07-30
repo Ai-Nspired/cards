@@ -37,12 +37,12 @@
     <div class="fullscreen-overlay" id="fullscreenOverlay">
         <div class="fs-header">
             <div style="display:flex; gap:8px;">
-                <button class="btn btn-ghost" onclick="app.toggleFullscreenFlip()"><i class="fas fa-sync-alt"></i> Flip</button>
-                <button class="btn btn-ghost" onclick="app.toggleNativeFullscreen()"><i class="fas fa-expand"></i> Native</button>
+                <button class="btn btn-ghost" onclick="kardsApp.toggleFullscreenFlip()"><i class="fas fa-sync-alt"></i> Flip</button>
+                <button class="btn btn-ghost" onclick="kardsApp.toggleNativeFullscreen()"><i class="fas fa-expand"></i> Native</button>
             </div>
             <div style="display:flex; gap:8px;">
-                 <button class="btn btn-ghost" onclick="app.readCurrentFullscreen()"><i class="fas fa-volume-up"></i></button>
-                 <button class="btn btn-ghost" onclick="app.closeFullscreen()"><i class="fas fa-times"></i></button>
+                 <button class="btn btn-ghost" onclick="kardsApp.readCurrentFullscreen()"><i class="fas fa-volume-up"></i></button>
+                 <button class="btn btn-ghost" onclick="kardsApp.closeFullscreen()"><i class="fas fa-times"></i></button>
             </div>
         </div>
         <div class="fs-content" id="fsContent">
@@ -97,7 +97,7 @@
         <div class="modal">
             <div class="modal-header">
                 <h3>Settings & Menu</h3>
-                <button class="btn btn-ghost" onclick="app.closeModal('settingsModal')"><i class="fas fa-times"></i></button>
+                <button class="btn btn-ghost" onclick="kardsApp.closeModal('settingsModal')"><i class="fas fa-times"></i></button>
             </div>
             <div class="modal-body">
                 <div class="style-section">
@@ -108,35 +108,35 @@
                 <div class="style-section">
                     <h4>Data Management</h4>
                     <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom: 16px;">
-                        <button class="btn btn-primary" onclick="app.exportData()"><i class="fas fa-download"></i> Export</button>
+                        <button class="btn btn-primary" onclick="kardsApp.exportData()"><i class="fas fa-download"></i> Export</button>
                         <button class="btn btn-ghost" onclick="document.getElementById('fileInput').click()"><i class="fas fa-upload"></i> Import</button>
                         <input type="file" id="fileInput" style="display:none;" accept=".json" onchange="app.importData(this)">
                     </div>
-                    <button class="btn btn-danger" onclick="app.clearAll()"><i class="fas fa-trash-alt"></i> Clear All Cards</button>
+                    <button class="btn btn-danger" onclick="kardsApp.clearAll()"><i class="fas fa-trash-alt"></i> Clear All Cards</button>
                     <br><br>
-                    <button class="btn btn-danger" onclick="app.resetApp()" style="background-color: #b71c1c; border: 1px solid #d32f2f;">
+                    <button class="btn btn-danger" onclick="kardsApp.resetApp()" style="background-color: #b71c1c; border: 1px solid #d32f2f;">
                         <i class="fas fa-power-off"></i> Factory Reset (Clear Storage)
                     </button>
                 </div>
                 <div class="style-section">
                     <h4>Theme & View</h4>
                     <div class="toggle-group" style="margin-bottom:10px;">
-                        <button class="toggle-btn" onclick="app.toggleThemeMode()">Toggle Light/Dark</button>
-                        <button class="toggle-btn" onclick="app.toggleThemeLock()">
+                        <button class="toggle-btn" onclick="kardsApp.toggleThemeMode()">Toggle Light/Dark</button>
+                        <button class="toggle-btn" onclick="kardsApp.toggleThemeLock()">
                             <i class="fas fa-lock"></i> <span id="lockLabel">Lock Theme</span>
                         </button>
                     </div>
                     <div class="toggle-group">
-                        <button class="toggle-btn" onclick="app.setCardView('list')">List</button>
-                        <button class="toggle-btn" onclick="app.setCardView('grid')">Grid</button>
-                        <button class="toggle-btn" onclick="app.setCardView('full')">Fullscreen</button>
+                        <button class="toggle-btn" onclick="kardsApp.setCardView('list')">List</button>
+                        <button class="toggle-btn" onclick="kardsApp.setCardView('grid')">Grid</button>
+                        <button class="toggle-btn" onclick="kardsApp.setCardView('full')">Fullscreen</button>
                     </div>
                 </div>
                 <div class="style-section">
                     <h4>Voice</h4>
                     <div class="toggle-group">
-                        <button class="toggle-btn" id="asrToggle" onclick="app.toggleASR()">ASR (Mic)</button>
-                        <button class="toggle-btn" id="ttsToggle" onclick="app.toggleTTS()">Auto TTS</button>
+                        <button class="toggle-btn" id="asrToggle" onclick="kardsApp.toggleASR()">ASR (Mic)</button>
+                        <button class="toggle-btn" id="ttsToggle" onclick="kardsApp.toggleTTS()">Auto TTS</button>
                     </div>
                 </div>
             </div>
@@ -147,14 +147,14 @@
         <div class="modal">
             <div class="modal-header">
                 <h3 id="editorTitle">Edit Text</h3>
-                <button class="btn btn-ghost" onclick="app.closeModal('textEditorModal')"><i class="fas fa-times"></i></button>
+                <button class="btn btn-ghost" onclick="kardsApp.closeModal('textEditorModal')"><i class="fas fa-times"></i></button>
             </div>
             <div class="modal-body">
                 <textarea id="textEditorArea"></textarea>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.closeModal('textEditorModal')">Cancel</button>
-                <button class="btn btn-primary" onclick="app.saveManualEdit()">Save</button>
+                <button class="btn btn-ghost" onclick="kardsApp.closeModal('textEditorModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="kardsApp.saveManualEdit()">Save</button>
             </div>
         </div>
     </div>
@@ -163,14 +163,14 @@
         <div class="modal">
             <div class="modal-header">
                 <h3 id="promptTitle">Action</h3>
-                <button class="btn btn-ghost" onclick="app.closeModal('promptModal')"><i class="fas fa-times"></i></button>
+                <button class="btn btn-ghost" onclick="kardsApp.closeModal('promptModal')"><i class="fas fa-times"></i></button>
             </div>
             <div class="modal-body">
                 <p id="promptDesc" style="margin-bottom:8px; font-size:13px; opacity:0.8;"></p>
                 <textarea id="promptArea" placeholder="Optional instructions..."></textarea>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.closeModal('promptModal')">Cancel</button>
+                <button class="btn btn-ghost" onclick="kardsApp.closeModal('promptModal')">Cancel</button>
                 <button class="btn btn-primary" id="promptConfirmBtn">Execute</button>
             </div>
         </div>
@@ -180,15 +180,15 @@
         <div class="modal">
             <div class="modal-header">
                 <h3>AI Stylist</h3>
-                <button class="btn btn-ghost" onclick="app.closeModal('aiThemeModal')"><i class="fas fa-times"></i></button>
+                <button class="btn btn-ghost" onclick="kardsApp.closeModal('aiThemeModal')"><i class="fas fa-times"></i></button>
             </div>
             <div class="modal-body">
                 <p style="margin-bottom:8px; font-size:13px; opacity:0.8;">Describe the vibe.</p>
                 <textarea id="aiThemePrompt" placeholder="Kill Bill red, pale text..."></textarea>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.closeModal('aiThemeModal')">Cancel</button>
-                <button class="btn btn-primary" onclick="app.applyAITheme()">Generate & Apply</button>
+                <button class="btn btn-ghost" onclick="kardsApp.closeModal('aiThemeModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="kardsApp.applyAITheme()">Generate & Apply</button>
             </div>
         </div>
     </div>
@@ -197,7 +197,7 @@
         <div class="modal">
             <div class="modal-header">
                 <h3>Card Styles</h3>
-                <button class="btn btn-ghost" onclick="app.closeModal('styleModal')"><i class="fas fa-times"></i></button>
+                <button class="btn btn-ghost" onclick="kardsApp.closeModal('styleModal')"><i class="fas fa-times"></i></button>
             </div>
             <div class="modal-body">
                 <div class="lock-checkbox">
@@ -230,8 +230,8 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-ghost" onclick="app.closeModal('styleModal')">Cancel</button>
-                <button class="btn btn-primary" onclick="app.saveStyles()">Apply Styles</button>
+                <button class="btn btn-ghost" onclick="kardsApp.closeModal('styleModal')">Cancel</button>
+                <button class="btn btn-primary" onclick="kardsApp.saveStyles()">Apply Styles</button>
             </div>
         </div>
     </div>
